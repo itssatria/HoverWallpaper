@@ -24,9 +24,9 @@ public static class Shot
         var savePresetName = Environment.GetEnvironmentVariable("HW_SHOT_SAVE_PRESET");
         if (!string.IsNullOrEmpty(savePresetName))
         {
-            Console.WriteLine(window.DebugSavePreset(savePresetName));
-            window.UpdateLayout();
-            Pump();
+          //  Console.WriteLine(window.DebugSavePreset(savePresetName));
+          //  window.UpdateLayout();
+          //  Pump();
         }
 
         // HW_SHOT_ZONES=1 captures just the hover-zone cards at their own size.
