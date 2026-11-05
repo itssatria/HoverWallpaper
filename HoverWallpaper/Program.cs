@@ -4,21 +4,57 @@ using Microsoft.Win32;
 
 namespace HoverWallpaper;
 
+// ──────────────────────────────────────────────────────────
+// Program entry point
+// ──────────────────────────────────────────────────────────
 internal static class Program
 {
     [STAThread]
     static void Main(string[] args)
     {
+        // Single instance: a second launch just asks the running one to open its settings.
+        using var mutex = new Mutex(true, @"Local\HoverWallpaper.SingleInstance", out bool first);
+        using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\HoverWallpaper.Show");
+        if (!first)
+        {
+            showEvent.Set();
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
-        var settings = AppSettings.Load();
-        if (args.Contains("--startup", StringComparer.OrdinalIgnoreCase) &&
-            File.Exists(settings.Image1) && File.Exists(settings.Image2))
-            Application.Run(new WallpaperTrayContext(settings));
-        else
-            Application.Run(new SettingsForm());
+        bool startHidden = args.Contains("--startup", StringComparer.OrdinalIgnoreCase);
+        Application.Run(new TrayApp(startHidden, showEvent));
     }
 }
 
+// ──────────────────────────────────────────────────────────
+// Image loading helper
+// ──────────────────────────────────────────────────────────
+public static class ImageHelper
+{
+    public static Image? LoadSafeImage(string? rawPath, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(rawPath)) { error = "No file path specified."; return null; }
+        string path = rawPath.Trim('"', ' ');
+        if (!File.Exists(path)) { error = $"File not found:\n{path}"; return null; }
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var temp = Image.FromStream(stream);
+            return new Bitmap(temp);
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to decode image ({Path.GetExtension(path)}):\n{ex.Message}\n\nTip: Use PNG, JPG, or BMP format.";
+            return null;
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────
+// Settings model
+// ──────────────────────────────────────────────────────────
 public sealed class AppSettings
 {
     public string Image1 { get; set; } = "";
@@ -28,9 +64,20 @@ public sealed class AppSettings
     public int Width { get; set; } = 25;
     public int Height { get; set; } = 35;
     public bool StartWithWindows { get; set; }
+    public FitMode Fit1 { get; set; } = FitMode.Fill;
+    public FitMode Fit2 { get; set; } = FitMode.Fill;
+    public CropRect Crop1 { get; set; } = new();
+    public CropRect Crop2 { get; set; } = new();
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasImages => File.Exists(Image1) && File.Exists(Image2);
+
+    static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+
     public static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "HoverWallpaper", "settings.json");
+
     public static AppSettings Load()
     {
         try { return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new(); }
@@ -39,14 +86,16 @@ public sealed class AppSettings
     public void Save()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, JsonOptions));
     }
 }
 
-
+// ──────────────────────────────────────────────────────────
+// Windows startup registry helper
+// ──────────────────────────────────────────────────────────
 internal static class StartupRegistration
 {
-    private const string RunKey = @"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "HoverWallpaper";
 
     public static void SetEnabled(bool enabled)
@@ -54,53 +103,15 @@ internal static class StartupRegistration
         using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true)
             ?? Registry.CurrentUser.CreateSubKey(RunKey, writable: true);
         if (enabled)
-        {
-            var exe = Application.ExecutablePath;
-            key.SetValue(ValueName, $"\\\"{exe}\\\" --startup");
-        }
-        else key.DeleteValue(ValueName, throwOnMissingValue: false);
+            key.SetValue(ValueName, $"\"{Application.ExecutablePath}\" --startup");
+        else
+            key.DeleteValue(ValueName, throwOnMissingValue: false);
     }
 }
 
-public sealed class WallpaperTrayContext : ApplicationContext
-{
-    private readonly NotifyIcon tray;
-    private readonly WallpaperWindow wallpaper;
-    public WallpaperTrayContext(AppSettings settings)
-    {
-        wallpaper = new WallpaperWindow(settings);
-        wallpaper.Show();
-        var menu = new ContextMenuStrip();
-        menu.Items.Add("Open Hover Wallpaper", null, (_, _) =>
-        {
-            var form = new SettingsForm();
-            form.Show();
-            form.Activate();
-        });
-        menu.Items.Add("Exit", null, (_, _) => ExitThread());
-        tray = new NotifyIcon
-        {
-            Text = "Hover Wallpaper",
-            Icon = SystemIcons.Application,
-            ContextMenuStrip = menu,
-            Visible = true
-        };
-        tray.DoubleClick += (_, _) =>
-        {
-            var form = new SettingsForm();
-            form.Show();
-            form.Activate();
-        };
-    }
-    protected override void ExitThreadCore()
-    {
-        tray.Visible = false;
-        tray.Dispose();
-        wallpaper.Close();
-        base.ExitThreadCore();
-    }
-}
-
+// ──────────────────────────────────────────────────────────
+// Settings UI form
+// ──────────────────────────────────────────────────────────
 public sealed class SettingsForm : Form
 {
     readonly AppSettings settings = AppSettings.Load();
@@ -111,92 +122,118 @@ public sealed class SettingsForm : Form
     readonly CheckBox startup = new() { Text = "Launch when I sign in to Windows", AutoSize = true };
     readonly Label status = new() { AutoSize = true, ForeColor = Color.DarkGreen };
     readonly Panel previewPanel = new() { Height = 140, Width = 250, Cursor = Cursors.Hand };
-    WallpaperWindow? wallpaper;
+    readonly TrayApp app;
+    readonly ComboBox fit1 = FitCombo(), fit2 = FitCombo();
+    readonly Button crop1Btn = new() { Text = "Crop…", AutoSize = true, Visible = false };
+    readonly Button crop2Btn = new() { Text = "Crop…", AutoSize = true, Visible = false };
     Image? previewImage;
+    string? previewError;
 
-    static NumericUpDown Num(int min, int max, int value) => new() { Minimum = min, Maximum = max, Value = value, Width = 75 };
-    public SettingsForm()
+    static ComboBox FitCombo()
     {
+        var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 230 };
+        c.Items.AddRange(FitModes.Labels);
+        return c;
+    }
+
+    static NumericUpDown Num(int min, int max, int value) =>
+        new() { Minimum = min, Maximum = max, Value = value, Width = 75 };
+
+    public SettingsForm(TrayApp app)
+    {
+        this.app = app;
         Text = "Hover Wallpaper"; Width = 640; Height = 560;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        img1.Text = settings.Image1; img2.Text = settings.Image2;
-        x.Value = settings.X; y.Value = settings.Y; w.Value = settings.Width; h.Value = settings.Height;
-        startup.Checked = settings.StartWithWindows;
 
-        // Repaint preview when coordinates change
+        img1.Text = settings.Image1; img2.Text = settings.Image2;
+        x.Value = settings.X; y.Value = settings.Y;
+        w.Value = settings.Width; h.Value = settings.Height;
+        startup.Checked = settings.StartWithWindows;
+        fit1.SelectedIndex = (int)settings.Fit1; fit2.SelectedIndex = (int)settings.Fit2;
+        fit1.SelectedIndexChanged += (_, _) => UpdateCropButtons();
+        fit2.SelectedIndexChanged += (_, _) => UpdateCropButtons();
+        crop1Btn.Click += (_, _) => EditCrop(img1, settings.Crop1);
+        crop2Btn.Click += (_, _) => EditCrop(img2, settings.Crop2);
+        UpdateCropButtons();
+
         x.ValueChanged += (_, _) => previewPanel.Invalidate();
         y.ValueChanged += (_, _) => previewPanel.Invalidate();
         w.ValueChanged += (_, _) => previewPanel.Invalidate();
         h.ValueChanged += (_, _) => previewPanel.Invalidate();
 
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 3, RowCount = 10 };
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, Padding = new Padding(18),
+            ColumnCount = 3, RowCount = 12
+        };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         Controls.Add(layout);
 
-        AddRow(layout, 0, "Image 1 (normal)", img1, PickButton(() => Pick(img1)));
-        AddRow(layout, 1, "Image 2 (hover)", img2, PickButton(() => Pick(img2)));
+        AddRow(layout, 0, "Image 1 (normal)", img1, BrowseBtn(() => Pick(img1, isImage1: true)));
+        AddRow(layout, 1, "Image 2 (hover)",  img2, BrowseBtn(() => Pick(img2, isImage1: false)));
 
-        var region = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        AddFitRow(layout, 2, "Image 1 fit", fit1, crop1Btn);
+        AddFitRow(layout, 3, "Image 2 fit", fit2, crop2Btn);
+
         var btnVisualEditor = new Button { Text = "Visual Editor…", AutoSize = true, Height = 28, Margin = new Padding(8, 5, 0, 0) };
         btnVisualEditor.Click += (_, _) => OpenVisualZoneEditor();
 
+        var region = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
         region.Controls.AddRange(new Control[] {
-            new Label { Text="X %", AutoSize=true, Padding=new Padding(0,7,0,0) }, x,
-            new Label { Text="Y %", AutoSize=true, Padding=new Padding(0,7,0,0) }, y,
-            new Label { Text="Width %", AutoSize=true, Padding=new Padding(0,7,0,0) }, w,
-            new Label { Text="Height %", AutoSize=true, Padding=new Padding(0,7,0,0) }, h,
+            new Label { Text = "X %",      AutoSize = true, Padding = new Padding(0,7,0,0) }, x,
+            new Label { Text = "Y %",      AutoSize = true, Padding = new Padding(0,7,0,0) }, y,
+            new Label { Text = "Width %",  AutoSize = true, Padding = new Padding(0,7,0,0) }, w,
+            new Label { Text = "Height %", AutoSize = true, Padding = new Padding(0,7,0,0) }, h,
             btnVisualEditor
         });
-        layout.Controls.Add(new Label { Text = "Hover area", AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, 2);
-        layout.Controls.Add(region, 1, 2); layout.SetColumnSpan(region, 2);
+        layout.Controls.Add(new Label { Text = "Hover area", AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, 4);
+        layout.Controls.Add(region, 1, 4); layout.SetColumnSpan(region, 2);
 
-        // Visual preview panel setup
         previewPanel.Paint += OnPreviewPaint;
         previewPanel.Click += (_, _) => OpenVisualZoneEditor();
+        var previewHint = new Label { Text = "Preview of Image 1 (click to edit zone visually):", AutoSize = true, Margin = new Padding(0,4,0,4), ForeColor = Color.DimGray };
         var previewContainer = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown };
-        var previewHint = new Label { Text = "Preview (click to edit zone visually):", AutoSize = true, Margin = new Padding(0, 4, 0, 4), ForeColor = Color.DimGray };
         previewContainer.Controls.AddRange(new Control[] { previewHint, previewPanel });
-        layout.Controls.Add(previewContainer, 1, 3); layout.SetColumnSpan(previewContainer, 2);
+        layout.Controls.Add(previewContainer, 1, 5); layout.SetColumnSpan(previewContainer, 2);
 
         var help = new Label { Text = "The hover area is measured from the top-left of your desktop. Values are percentages of the full screen.", AutoSize = true, MaximumSize = new Size(580, 0) };
-        layout.Controls.Add(help, 0, 4); layout.SetColumnSpan(help, 3);
-        layout.Controls.Add(startup, 0, 5); layout.SetColumnSpan(startup, 3);
+        layout.Controls.Add(help, 0, 6); layout.SetColumnSpan(help, 3);
+        layout.Controls.Add(startup, 0, 7); layout.SetColumnSpan(startup, 3);
+
+        var applyBtn = new Button { Text = "Apply wallpaper", AutoSize = true, Height = 36 };
+        applyBtn.Click += (_, _) => ApplyWallpaper();
+        var stopBtn = new Button { Text = "Stop", AutoSize = true, Height = 36 };
+        stopBtn.Click += (_, _) => { app.Stop(); status.Text = "Wallpaper stopped."; status.ForeColor = Color.DarkGreen; };
 
         var buttons = new FlowLayoutPanel { AutoSize = true };
-        var apply = new Button { Text = "Apply wallpaper", AutoSize = true, Height = 36 };
-        apply.Click += (_, _) => ApplyWallpaper();
-        var stop = new Button { Text = "Stop", AutoSize = true, Height = 36 };
-        stop.Click += (_, _) => { wallpaper?.Close(); wallpaper = null; status.Text = "Wallpaper stopped."; };
-        buttons.Controls.AddRange(new Control[] { apply, stop });
-        layout.Controls.Add(buttons, 0, 6); layout.SetColumnSpan(buttons, 3);
-        layout.Controls.Add(status, 0, 7); layout.SetColumnSpan(status, 3);
+        buttons.Controls.AddRange(new Control[] { applyBtn, stopBtn });
+        layout.Controls.Add(buttons, 0, 8); layout.SetColumnSpan(buttons, 3);
+        layout.Controls.Add(status, 0, 9); layout.SetColumnSpan(status, 3);
 
         LoadPreviewImage();
-        FormClosing += (_, _) =>
+        FormClosing += (_, e) =>
         {
-            wallpaper?.Close();
+            // Closing the window keeps the wallpaper running in the tray; use the tray menu to exit.
+            if (e.CloseReason == CloseReason.UserClosing && !app.IsExiting)
+            {
+                e.Cancel = true;
+                Hide();
+                app.NotifyHiddenToTray();
+                return;
+            }
             previewImage?.Dispose();
         };
     }
 
     void LoadPreviewImage()
     {
-        previewImage?.Dispose();
-        previewImage = null;
-        string path = !string.IsNullOrWhiteSpace(img1.Text) && File.Exists(img1.Text) ? img1.Text : img2.Text;
-        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
-        {
-            try
-            {
-                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var temp = Image.FromStream(stream);
-                previewImage = new Bitmap(temp);
-            }
-            catch { }
-        }
+        previewImage?.Dispose(); previewImage = null; previewError = null;
+        string path = img1.Text.Trim('"', ' ');
+        if (!string.IsNullOrWhiteSpace(path))
+            previewImage = ImageHelper.LoadSafeImage(path, out previewError);
         previewPanel.Invalidate();
     }
 
@@ -208,90 +245,135 @@ public sealed class SettingsForm : Form
         if (previewImage != null)
         {
             g.DrawImage(previewImage, r);
+            int zx = (int)Math.Round(r.Width  * (double)x.Value / 100.0);
+            int zy = (int)Math.Round(r.Height * (double)y.Value / 100.0);
+            int zw = Math.Max(1, (int)Math.Round(r.Width  * (double)w.Value / 100.0));
+            int zh = Math.Max(1, (int)Math.Round(r.Height * (double)h.Value / 100.0));
+            using var fill = new SolidBrush(Color.FromArgb(70, 0, 120, 215));
+            g.FillRectangle(fill, zx, zy, zw, zh);
+            using var pen = new Pen(Color.FromArgb(0, 120, 215), 1.5f);
+            g.DrawRectangle(pen, zx, zy, zw, zh);
         }
         else
         {
-            using var bg = new SolidBrush(Color.FromArgb(240, 240, 243));
+            using var bg = new SolidBrush(previewError != null ? Color.FromArgb(255,240,240) : Color.FromArgb(240,240,243));
             g.FillRectangle(bg, r);
-            using var textBrush = new SolidBrush(Color.Gray);
+            using var tb = new SolidBrush(previewError != null ? Color.DarkRed : Color.Gray);
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString("Select an image to preview", Font, textBrush, r, sf);
+            g.DrawString(previewError != null ? $"Image 1 error:\n{previewError}" : "Select Image 1 to preview", Font, tb, r, sf);
         }
 
-        // Draw hover area highlight
-        int zx = (int)Math.Round(r.Width * ((double)x.Value / 100.0));
-        int zy = (int)Math.Round(r.Height * ((double)y.Value / 100.0));
-        int zw = Math.Max(1, (int)Math.Round(r.Width * ((double)w.Value / 100.0)));
-        int zh = Math.Max(1, (int)Math.Round(r.Height * ((double)h.Value / 100.0)));
-        var zoneRect = new Rectangle(zx, zy, zw, zh);
-
-        using var fillBrush = new SolidBrush(Color.FromArgb(70, 0, 120, 215));
-        g.FillRectangle(fillBrush, zoneRect);
-        using var pen = new Pen(Color.FromArgb(0, 120, 215), 1.5f);
-        g.DrawRectangle(pen, zoneRect);
-
-        // Border around preview box
-        using var borderPen = new Pen(Color.LightGray);
-        g.DrawRectangle(borderPen, 0, 0, r.Width - 1, r.Height - 1);
+        using var border = new Pen(previewError != null ? Color.Salmon : Color.LightGray);
+        g.DrawRectangle(border, 0, 0, r.Width - 1, r.Height - 1);
     }
 
     void OpenVisualZoneEditor()
     {
         if (string.IsNullOrWhiteSpace(img1.Text) && string.IsNullOrWhiteSpace(img2.Text))
         {
-            MessageBox.Show(this, "Please choose at least Image 1 before opening the visual editor.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, "Please choose at least Image 1 first.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-
         using var editor = new ZoneEditorForm(img1.Text, img2.Text, (int)x.Value, (int)y.Value, (int)w.Value, (int)h.Value);
         if (editor.ShowDialog(this) == DialogResult.OK)
         {
-            x.Value = editor.ResultX;
-            y.Value = editor.ResultY;
-            w.Value = editor.ResultWidth;
-            h.Value = editor.ResultHeight;
+            x.Value = editor.ResultX; y.Value = editor.ResultY;
+            w.Value = editor.ResultWidth; h.Value = editor.ResultHeight;
             previewPanel.Invalidate();
         }
     }
 
-    static void AddRow(TableLayoutPanel p, int row, string label, Control field, Control button)
+    static void AddRow(TableLayoutPanel p, int row, string label, Control field, Control btn)
     {
-        p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 8, 12, 0) }, 0, row);
-        p.Controls.Add(field, 1, row); p.Controls.Add(button, 2, row);
+        p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, row);
+        p.Controls.Add(field, 1, row);
+        p.Controls.Add(btn,   2, row);
     }
-    static Button PickButton(Action action) { var b = new Button { Text = "Browse…", AutoSize = true }; b.Click += (_, _) => action(); return b; }
-    void Pick(TextBox box)
+    static void AddFitRow(TableLayoutPanel p, int row, string label, ComboBox combo, Button crop)
     {
-        using var dialog = new OpenFileDialog { Filter = "Image files|*.jpg;*.jpeg;*.png;*.bmp;*.webp|All files|*.*" };
-        if (dialog.ShowDialog(this) == DialogResult.OK)
+        p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, row);
+        p.Controls.Add(combo, 1, row);
+        p.Controls.Add(crop, 2, row);
+    }
+
+    void UpdateCropButtons()
+    {
+        crop1Btn.Visible = fit1.SelectedIndex == (int)FitMode.Custom;
+        crop2Btn.Visible = fit2.SelectedIndex == (int)FitMode.Custom;
+    }
+
+    void EditCrop(TextBox box, CropRect current)
+    {
+        string path = box.Text.Trim('"', ' ');
+        if (!File.Exists(path))
         {
-            box.Text = dialog.FileName;
-            LoadPreviewImage();
+            MessageBox.Show(this, "Choose the image first.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        using var editor = new CropEditorForm(path, current);
+        if (editor.ShowDialog(this) != DialogResult.OK) return;
+        var r = editor.Result;
+        current.X = r.X; current.Y = r.Y; current.W = r.W; current.H = r.H;
+    }
+
+    static Button BrowseBtn(Action action)
+    {
+        var b = new Button { Text = "Browse…", AutoSize = true };
+        b.Click += (_, _) => action();
+        return b;
+    }
+    void Pick(TextBox box, bool isImage1)
+    {
+        using var dlg = new OpenFileDialog { Filter = "Supported images|*.jpg;*.jpeg;*.png;*.bmp|All files|*.*" };
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+            box.Text = dlg.FileName;
+            var crop = isImage1 ? settings.Crop1 : settings.Crop2;
+            crop.X = 0; crop.Y = 0; crop.W = 100; crop.H = 100;
+            if (isImage1) LoadPreviewImage();
         }
     }
     void ApplyWallpaper()
     {
-        if (!File.Exists(img1.Text) || !File.Exists(img2.Text))
-        { MessageBox.Show(this, "Please choose valid files for both Image 1 and Image 2.", "Images required", MessageBoxButtons.OK, MessageBoxIcon.Warning); return; }
-        settings.Image1 = img1.Text; settings.Image2 = img2.Text;
-        settings.X = (int)x.Value; settings.Y = (int)y.Value; settings.Width = (int)w.Value; settings.Height = (int)h.Value;
-        settings.StartWithWindows = startup.Checked; settings.Save();
-        StartupRegistration.SetEnabled(startup.Checked);
-        try
+        string p1 = img1.Text.Trim('"', ' ');
+        string p2 = img2.Text.Trim('"', ' ');
+        if (string.IsNullOrWhiteSpace(p1) || string.IsNullOrWhiteSpace(p2))
         {
-            wallpaper?.Close();
-            wallpaper = new WallpaperWindow(settings);
-            wallpaper.Show();
-            status.Text = "Wallpaper applied. Move your cursor into the selected area to reveal Image 2.";
+            MessageBox.Show(this, "Please choose valid files for both images.", "Images required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
         }
-        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Could not apply wallpaper"); }
+        using (ImageHelper.LoadSafeImage(p1, out var e1)) { if (e1 != null) { MessageBox.Show(this, $"Image 1 error:\n{e1}", "Image 1", MessageBoxButtons.OK, MessageBoxIcon.Error); return; } }
+        using (ImageHelper.LoadSafeImage(p2, out var e2)) { if (e2 != null) { MessageBox.Show(this, $"Image 2 error:\n{e2}", "Image 2", MessageBoxButtons.OK, MessageBoxIcon.Error); return; } }
+
+        settings.Image1 = p1; settings.Image2 = p2;
+        settings.X = (int)x.Value; settings.Y = (int)y.Value;
+        settings.Width = (int)w.Value; settings.Height = (int)h.Value;
+        settings.StartWithWindows = startup.Checked;
+        settings.Fit1 = (FitMode)fit1.SelectedIndex; settings.Fit2 = (FitMode)fit2.SelectedIndex;
+        settings.Save();
+        StartupRegistration.SetEnabled(startup.Checked);
+
+        if (app.TryStart(settings, out var err))
+        {
+            status.Text = "Wallpaper applied. Closing this window keeps it running in the tray.";
+            status.ForeColor = Color.DarkGreen;
+        }
+        else
+        {
+            status.Text = $"Error: {err}";
+            status.ForeColor = Color.DarkRed;
+            MessageBox.Show(this, err, "Could not apply wallpaper", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }
 
+// ──────────────────────────────────────────────────────────
+// Desktop wallpaper window (renders behind desktop icons)
+// ──────────────────────────────────────────────────────────
 public sealed class WallpaperWindow : Form
 {
     readonly AppSettings settings;
-    readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.StretchImage };
+    readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Normal };
     readonly System.Windows.Forms.Timer timer = new() { Interval = 30 };
     Image? normal, hover;
     bool showingHover;
@@ -300,71 +382,185 @@ public sealed class WallpaperWindow : Form
     public WallpaperWindow(AppSettings s)
     {
         settings = s;
-        normal = LoadSafeImage(s.Image1); hover = LoadSafeImage(s.Image2);
+
+        var size = SystemInformation.VirtualScreen.Size;
+        using (var src1 = ImageHelper.LoadSafeImage(s.Image1, out var e1))
+        {
+            if (src1 == null) throw new InvalidOperationException($"Cannot load Image 1:\n{e1}");
+            normal = ImageRenderer.Render(src1, size, s.Fit1, s.Crop1);
+        }
+        using (var src2 = ImageHelper.LoadSafeImage(s.Image2, out var e2))
+        {
+            if (src2 == null) throw new InvalidOperationException($"Cannot load Image 2:\n{e2}");
+            hover = ImageRenderer.Render(src2, size, s.Fit2, s.Crop2);
+        }
+
         picture.Image = normal;
         Controls.Add(picture);
-        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
-        Bounds = SystemInformation.VirtualScreen;
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
         BackColor = Color.Black;
-        Load += (_, _) => AttachToDesktop();
+        // Park off-screen; real position is set after desktop attachment in Load
+        Location = new Point(-32000, -32000);
+        Size = new Size(1, 1);
+
+        Load += OnLoad;
         timer.Tick += (_, _) => UpdateHover();
-        timer.Start();
     }
-    static Image? LoadSafeImage(string? path)
+
+    protected override CreateParams CreateParams
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+        get { var cp = base.CreateParams; cp.ExStyle |= 0x00080000; return cp; } // WS_EX_LAYERED
+    }
+
+    void OnLoad(object? sender, EventArgs e)
+    {
+        Load -= OnLoad;
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var temp = Image.FromStream(stream);
-            return new Bitmap(temp);
+            AttachToDesktop();
+            timer.Start();
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            timer.Stop();
+            MessageBox.Show(ex.Message, "Wallpaper attach error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Close();
+        }
     }
+
     void AttachToDesktop()
     {
-        // Ask Explorer to create the wallpaper host WorkerW behind desktop icons.
         var progman = FindWindow("Progman", null);
-        SendMessageTimeout(progman, 0x052C, new IntPtr(0xD), IntPtr.Zero, 0, 1000, out _);
+        if (progman == IntPtr.Zero)
+            throw new InvalidOperationException("Windows Explorer (Progman) not found.");
+
+        // Trigger WorkerW creation behind desktop icons
+        SendMessageTimeout(progman, 0x052C, IntPtr.Zero,       IntPtr.Zero, 0, 1000, out _);
+        SendMessageTimeout(progman, 0x052C, new IntPtr(0xD),   IntPtr.Zero, 0, 1000, out _);
+
         IntPtr candidate = IntPtr.Zero;
-        EnumWindows((top, _) =>
+
+        // Newer Windows 11 builds (24H2+): SHELLDLL_DefView is a child of Progman,
+        // and the wallpaper layer is Progman's own child WorkerW.
+        bool defViewUnderProgman = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero;
+        if (defViewUnderProgman)
         {
-            var view = FindWindowEx(top, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (view != IntPtr.Zero) { candidate = FindWindowEx(IntPtr.Zero, top, "WorkerW", null); return false; }
-            return true;
-        }, IntPtr.Zero);
-        worker = candidate;
-        if (worker != IntPtr.Zero)
-        {
-            SetParent(Handle, worker);
-            SetWindowLongPtr(Handle, -16, new IntPtr(0x50000000)); // WS_CHILD | WS_VISIBLE
-            Bounds = new Rectangle(0, 0, SystemInformation.VirtualScreen.Width, SystemInformation.VirtualScreen.Height);
+            var w = FindWindowEx(progman, IntPtr.Zero, "WorkerW", null);
+            if (w != IntPtr.Zero) candidate = w;
         }
+
+        // Strategy A — classic: WorkerW is a top-level sibling of the window that owns SHELLDLL_DefView
+        if (candidate == IntPtr.Zero && !defViewUnderProgman)
+        {
+            EnumWindows((hwnd, _) =>
+            {
+                var defView = FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null);
+                if (defView != IntPtr.Zero)
+                {
+                    var w = FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
+                    if (w != IntPtr.Zero) { candidate = w; return false; }
+                }
+                return true;
+            }, IntPtr.Zero);
+        }
+
+        // Strategy B — WorkerW is a direct child of Progman
+        if (candidate == IntPtr.Zero)
+        {
+            var w = FindWindowEx(progman, IntPtr.Zero, "WorkerW", null);
+            if (w != IntPtr.Zero) candidate = w;
+        }
+
+        // Strategy C — any top-level WorkerW that does NOT host SHELLDLL_DefView
+        if (candidate == IntPtr.Zero)
+        {
+            EnumWindows((hwnd, _) =>
+            {
+                var cls = new System.Text.StringBuilder(64);
+                GetClassName(hwnd, cls, cls.Capacity);
+                if (cls.ToString() == "WorkerW")
+                {
+                    var defView = FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null);
+                    if (defView == IntPtr.Zero) { candidate = hwnd; return false; }
+                }
+                return true;
+            }, IntPtr.Zero);
+        }
+
+        // Strategy D — fall back to Progman itself; still renders below icons
+        if (candidate == IntPtr.Zero) candidate = progman;
+
+        IntPtr insertAfter = IntPtr.Zero;
+        uint posFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        if (defViewUnderProgman)
+        {
+            // Windows 11 24H2+: Progman's child WorkerW is composited by DWM and hides
+            // child windows. Parent to Progman and sit directly beneath the icon view.
+            candidate = progman;
+            insertAfter = FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+            posFlags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        }
+
+        worker = candidate;
+
+        // Reparent our form into the desktop layer
+        SetParent(Handle, worker);
+        SetWindowLongPtr(Handle, -16, new IntPtr(0x50000000)); // WS_CHILD | WS_VISIBLE
+
+        var vs = SystemInformation.VirtualScreen;
+        SetWindowPos(Handle, insertAfter, 0, 0, vs.Width, vs.Height, posFlags);
+        picture.Bounds = new Rectangle(0, 0, vs.Width, vs.Height);
+        picture.Image = showingHover ? hover : normal;
+        PerformLayout();
+        SetLayeredWindowAttributes(Handle, 0, 255, 0x2); // LWA_ALPHA
+        Invalidate(true);
+        Update();
     }
+
     void UpdateHover()
     {
-        if (worker == IntPtr.Zero || !IsWindow(worker)) { AttachToDesktop(); if (worker == IntPtr.Zero) return; }
+        if (worker == IntPtr.Zero || !IsWindow(worker))
+        {
+            try { AttachToDesktop(); } catch { return; }
+        }
         if (!GetCursorPos(out var p)) return;
-        var screen = SystemInformation.VirtualScreen;
-        int rx = screen.Left + screen.Width * settings.X / 100;
-        int ry = screen.Top + screen.Height * settings.Y / 100;
-        int rw = screen.Width * settings.Width / 100;
-        int rh = screen.Height * settings.Height / 100;
+        var s = SystemInformation.VirtualScreen;
+        int rx = s.Left + s.Width  * settings.X      / 100;
+        int ry = s.Top  + s.Height * settings.Y      / 100;
+        int rw =          s.Width  * settings.Width  / 100;
+        int rh =          s.Height * settings.Height / 100;
         bool inside = p.X >= rx && p.X < rx + rw && p.Y >= ry && p.Y < ry + rh;
-        if (inside != showingHover) { showingHover = inside; picture.Image = inside ? hover : normal; }
+        if (inside != showingHover)
+        {
+            showingHover = inside;
+            picture.Image = inside ? hover : normal;
+        }
     }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        timer.Stop(); normal?.Dispose(); hover?.Dispose(); base.OnFormClosed(e);
+        timer.Stop(); normal?.Dispose(); hover?.Dispose();
+        base.OnFormClosed(e);
     }
+
+    // ── Win32 P/Invoke ────────────────────────────────────
+    const uint SWP_NOZORDER   = 0x0004;
+    const uint SWP_NOACTIVATE = 0x0010;
+    const uint SWP_SHOWWINDOW = 0x0040;
+
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
     [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
-    [DllImport("user32.dll", CharSet=CharSet.Auto)] static extern IntPtr FindWindow(string c, string? n);
-    [DllImport("user32.dll", CharSet=CharSet.Auto)] static extern IntPtr FindWindowEx(IntPtr p, IntPtr after, string c, string? n);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindow(string cls, string? name);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? name);
     [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr child, IntPtr parent);
-    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
-    delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc callback, IntPtr l);
-    [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder cls, int maxCount);
+    [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint key, byte alpha, uint flags);
+    delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
 }

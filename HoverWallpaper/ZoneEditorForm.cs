@@ -6,6 +6,8 @@ public sealed class ZoneEditorForm : Form
 {
     private readonly Image? image1;
     private readonly Image? image2;
+    private readonly string? error1;
+    private readonly string? error2;
     private readonly double desktopAspectRatio;
 
     private int zoneX;
@@ -20,6 +22,8 @@ public sealed class ZoneEditorForm : Form
 
     private readonly Panel canvas;
     private readonly Label lblCoords;
+    private readonly RadioButton rdoViewImage1;
+    private readonly RadioButton rdoViewImage2;
     private readonly CheckBox chkTestHover;
 
     public int ResultX => zoneX;
@@ -30,8 +34,8 @@ public sealed class ZoneEditorForm : Form
     public ZoneEditorForm(string? image1Path, string? image2Path, int initialX, int initialY, int initialW, int initialH)
     {
         Text = "Visual Hover-Zone Editor - Drag to Select Area";
-        Width = 920;
-        Height = 650;
+        Width = 960;
+        Height = 670;
         StartPosition = FormStartPosition.CenterParent;
         DoubleBuffered = true;
 
@@ -43,68 +47,8 @@ public sealed class ZoneEditorForm : Form
         var vs = SystemInformation.VirtualScreen;
         desktopAspectRatio = (double)vs.Width / Math.Max(1, vs.Height);
 
-        image1 = LoadSafeImage(image1Path);
-        image2 = LoadSafeImage(image2Path);
-
-        // Header toolbar
-        var topBar = new Panel { Dock = DockStyle.Top, Height = 50, Padding = new Padding(12, 8, 12, 8), BackColor = Color.FromArgb(245, 245, 247) };
-        var infoLabel = new Label
-        {
-            Text = "Click and drag on the image below to define the hover trigger area:",
-            AutoSize = true,
-            Font = new Font(FontFamily.GenericSansSerif, 9.5f, FontStyle.Bold),
-            Location = new Point(12, 14)
-        };
-
-        chkTestHover = new CheckBox
-        {
-            Text = "Test hover effect live",
-            AutoSize = true,
-            Location = new Point(560, 14),
-            Font = new Font(FontFamily.GenericSansSerif, 9f)
-        };
-        chkTestHover.CheckedChanged += (_, _) =>
-        {
-            previewHoverActive = chkTestHover.Checked;
-            canvas.Invalidate();
-        };
-
-        topBar.Controls.Add(infoLabel);
-        if (image2 != null)
-        {
-            topBar.Controls.Add(chkTestHover);
-        }
-
-        // Bottom status & buttons bar
-        var bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 60, Padding = new Padding(14, 10, 14, 10), BackColor = Color.FromArgb(245, 245, 247) };
-        lblCoords = new Label
-        {
-            Text = $"Hover Area: X = {zoneX}%, Y = {zoneY}%, Width = {zoneWidth}%, Height = {zoneHeight}%",
-            AutoSize = true,
-            Location = new Point(14, 20),
-            Font = new Font(FontFamily.GenericSansSerif, 9.5f, FontStyle.Regular)
-        };
-
-        var btnOk = new Button { Text = "Apply Selection", DialogResult = DialogResult.OK, Width = 130, Height = 36, Location = new Point(Width - 280, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 95, Height = 36, Location = new Point(Width - 135, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-
-        btnOk.Click += (_, _) =>
-        {
-            // Normalize minimum bounds
-            if (zoneWidth < 1) zoneWidth = 1;
-            if (zoneHeight < 1) zoneHeight = 1;
-            Close();
-        };
-        btnCancel.Click += (_, _) => Close();
-
-        // Preset buttons
-        var btnPresetCenter = new Button { Text = "Center (50%)", AutoSize = true, Height = 30, Location = new Point(Width - 530, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        btnPresetCenter.Click += (_, _) => SetZone(25, 25, 50, 50);
-
-        var btnPresetFull = new Button { Text = "Full Screen", AutoSize = true, Height = 30, Location = new Point(Width - 435, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        btnPresetFull.Click += (_, _) => SetZone(0, 0, 100, 100);
-
-        bottomBar.Controls.AddRange(new Control[] { lblCoords, btnPresetCenter, btnPresetFull, btnOk, btnCancel });
+        image1 = ImageHelper.LoadSafeImage(image1Path, out error1);
+        image2 = ImageHelper.LoadSafeImage(image2Path, out error2);
 
         // Canvas for drawing
         canvas = new DoubleBufferedPanel
@@ -126,6 +70,93 @@ public sealed class ZoneEditorForm : Form
             }
         };
 
+        // Header toolbar
+        var topBar = new Panel { Dock = DockStyle.Top, Height = 52, Padding = new Padding(12, 10, 12, 8), BackColor = Color.FromArgb(245, 245, 247) };
+        var infoLabel = new Label
+        {
+            Text = "Drag to draw hover zone:",
+            AutoSize = true,
+            Font = new Font(FontFamily.GenericSansSerif, 9.5f, FontStyle.Bold),
+            Location = new Point(12, 16)
+        };
+
+        var viewLabel = new Label
+        {
+            Text = "View:",
+            AutoSize = true,
+            Font = new Font(FontFamily.GenericSansSerif, 9f, FontStyle.Bold),
+            Location = new Point(220, 17)
+        };
+
+        rdoViewImage1 = new RadioButton
+        {
+            Text = "Image 1 (Normal)",
+            Checked = true,
+            AutoSize = true,
+            Location = new Point(270, 15),
+            Font = new Font(FontFamily.GenericSansSerif, 9f)
+        };
+        rdoViewImage1.CheckedChanged += (_, _) => canvas.Invalidate();
+
+        rdoViewImage2 = new RadioButton
+        {
+            Text = "Image 2 (Hover)",
+            Checked = false,
+            AutoSize = true,
+            Location = new Point(410, 15),
+            Font = new Font(FontFamily.GenericSansSerif, 9f)
+        };
+        rdoViewImage2.CheckedChanged += (_, _) => canvas.Invalidate();
+
+        chkTestHover = new CheckBox
+        {
+            Text = "Test hover effect live",
+            AutoSize = true,
+            Location = new Point(560, 15),
+            Font = new Font(FontFamily.GenericSansSerif, 9f, FontStyle.Regular)
+        };
+        chkTestHover.CheckedChanged += (_, _) =>
+        {
+            previewHoverActive = chkTestHover.Checked;
+            canvas.Invalidate();
+        };
+
+        topBar.Controls.AddRange(new Control[] { infoLabel, viewLabel, rdoViewImage1, rdoViewImage2 });
+        if (image2 != null)
+        {
+            topBar.Controls.Add(chkTestHover);
+        }
+
+        // Bottom status & buttons bar
+        var bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 60, Padding = new Padding(14, 10, 14, 10), BackColor = Color.FromArgb(245, 245, 247) };
+        lblCoords = new Label
+        {
+            Text = $"Hover Area: X = {zoneX}%, Y = {zoneY}%, Width = {zoneWidth}%, Height = {zoneHeight}%",
+            AutoSize = true,
+            Location = new Point(14, 20),
+            Font = new Font(FontFamily.GenericSansSerif, 9.5f, FontStyle.Regular)
+        };
+
+        var btnOk = new Button { Text = "Apply Selection", DialogResult = DialogResult.OK, Width = 130, Height = 36, Location = new Point(Width - 280, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 95, Height = 36, Location = new Point(Width - 135, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+
+        btnOk.Click += (_, _) =>
+        {
+            if (zoneWidth < 1) zoneWidth = 1;
+            if (zoneHeight < 1) zoneHeight = 1;
+            Close();
+        };
+        btnCancel.Click += (_, _) => Close();
+
+        // Preset buttons
+        var btnPresetCenter = new Button { Text = "Center (50%)", AutoSize = true, Height = 30, Location = new Point(Width - 530, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        btnPresetCenter.Click += (_, _) => SetZone(25, 25, 50, 50);
+
+        var btnPresetFull = new Button { Text = "Full Screen", AutoSize = true, Height = 30, Location = new Point(Width - 435, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        btnPresetFull.Click += (_, _) => SetZone(0, 0, 100, 100);
+
+        bottomBar.Controls.AddRange(new Control[] { lblCoords, btnPresetCenter, btnPresetFull, btnOk, btnCancel });
+
         Controls.Add(canvas);
         Controls.Add(topBar);
         Controls.Add(bottomBar);
@@ -135,21 +166,6 @@ public sealed class ZoneEditorForm : Form
             image1?.Dispose();
             image2?.Dispose();
         };
-    }
-
-    private static Image? LoadSafeImage(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
-        try
-        {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var temp = Image.FromStream(stream);
-            return new Bitmap(temp);
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     private void SetZone(int x, int y, int w, int h)
@@ -195,19 +211,40 @@ public sealed class ZoneEditorForm : Form
         var imgBounds = GetImageDisplayBounds();
         if (imgBounds.Width <= 0 || imgBounds.Height <= 0) return;
 
-        // Draw active background image
-        var currentImage = (previewHoverActive && cursorInsideZone && image2 != null) ? image2 : (image1 ?? image2);
+        // Determine which image to render
+        Image? currentImage;
+        string? activeError;
+
+        if (previewHoverActive)
+        {
+            currentImage = (cursorInsideZone && image2 != null) ? image2 : image1;
+            activeError = (cursorInsideZone && image2 != null) ? error2 : error1;
+        }
+        else if (rdoViewImage2.Checked)
+        {
+            currentImage = image2;
+            activeError = error2;
+        }
+        else
+        {
+            currentImage = image1;
+            activeError = error1;
+        }
+
         if (currentImage != null)
         {
             g.DrawImage(currentImage, imgBounds);
         }
         else
         {
-            using var placeholderBrush = new SolidBrush(Color.FromArgb(50, 50, 55));
+            using var placeholderBrush = new SolidBrush(Color.FromArgb(45, 45, 50));
             g.FillRectangle(placeholderBrush, imgBounds);
-            using var textBrush = new SolidBrush(Color.Gray);
+            using var textBrush = new SolidBrush(activeError != null ? Color.Salmon : Color.LightGray);
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString("No image loaded.\nDrag to define trigger coordinates on the virtual desktop canvas.", Font, textBrush, imgBounds, sf);
+            string msg = activeError != null
+                ? $"Could not load image:\n{activeError}"
+                : "No image loaded.\nDrag to define trigger coordinates on the virtual desktop canvas.";
+            g.DrawString(msg, Font, textBrush, imgBounds, sf);
         }
 
         // Calculate current screen rectangle for the hover zone
@@ -219,7 +256,7 @@ public sealed class ZoneEditorForm : Form
 
         if (!previewHoverActive)
         {
-            // Dim outside area
+            // Dim unselected area
             using var dimBrush = new SolidBrush(Color.FromArgb(130, 0, 0, 0));
             using var path = new GraphicsPath();
             path.AddRectangle(imgBounds);
@@ -250,7 +287,7 @@ public sealed class ZoneEditorForm : Form
                 g.DrawRectangle(handlePen, r);
             }
 
-            // Draw floating tag inside zone
+            // Draw dimension badge inside zone
             string tag = $"{zoneWidth}% x {zoneHeight}%";
             using var tagFont = new Font(FontFamily.GenericSansSerif, 8.5f, FontStyle.Bold);
             var tagSize = g.MeasureString(tag, tagFont);
@@ -265,7 +302,7 @@ public sealed class ZoneEditorForm : Form
         else
         {
             // In live hover test mode, draw subtle border
-            using var pen = new Pen(cursorInsideZone ? Color.FromArgb(100, 0, 255, 0) : Color.FromArgb(120, 255, 255, 255), 1.5f);
+            using var pen = new Pen(cursorInsideZone ? Color.FromArgb(160, 0, 255, 0) : Color.FromArgb(120, 255, 255, 255), 1.5f);
             pen.DashStyle = DashStyle.Dot;
             g.DrawRectangle(pen, zoneRect);
         }
@@ -350,4 +387,3 @@ public sealed class ZoneEditorForm : Form
         }
     }
 }
-
