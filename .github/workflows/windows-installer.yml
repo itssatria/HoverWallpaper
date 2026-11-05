@@ -1,0 +1,25 @@
+name: Build Windows installer
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+      - name: Publish and package
+        shell: pwsh
+        run: .\build.ps1
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: HoverWallpaper-Windows11-Installer
+          path: installer/Output/HoverWallpaper-Setup-1.0.0.exe
+          if-no-files-found: error
