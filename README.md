@@ -24,9 +24,10 @@ Set a normal wallpaper, define a hover zone, and reveal a second image whenever 
 | Feature | Description |
 |---|---|
 | **Two-image wallpaper** | Choose **Image 1** for the normal desktop and **Image 2** for the hover effect. |
+| **Visual zone editor** | Interactive canvas with drag-to-select, presets, and live hover testing. |
 | **Mouse-triggered reveal** | Image 2 appears when the cursor enters the configured rectangular area. |
 | **Automatic restore** | Leaving the hover area switches back to Image 1. |
-| **Configurable hover zone** | Set the area's X position, Y position, width, and height as percentages of the virtual desktop. |
+| **Configurable hover zone** | Set the area's X position, Y position, width, and height as percentages of the virtual desktop or draw it visually. |
 | **Common image formats** | Supports JPG, JPEG, PNG, BMP, and WebP file selection. Actual decoding depends on Windows image codec support. |
 | **Windows startup** | The installer can register the app to start when the current Windows user signs in. |
 | **System tray mode** | Startup mode runs the wallpaper in the background with a tray icon and Exit command. |
@@ -67,6 +68,7 @@ HoverWallpaper/
 │   │   └── HoverWallpaper.png      # Repository / README icon
 │   ├── HoverWallpaper.csproj       # .NET Windows Forms project
 │   ├── Program.cs                  # Settings UI, wallpaper window, tray, startup
+│   ├── ZoneEditorForm.cs           # Visual drag-to-select zone editor & live preview
 │   └── app.manifest                # Windows application manifest
 ├── installer/
 │   └── HoverWallpaper.iss         # Inno Setup installer definition
@@ -99,7 +101,7 @@ Install these tools on a Windows 11 x64 machine:
 Clone your repository:
 
 ```powershell
-git clone https://github.com/YOUR_USERNAME/HoverWallpaper.git
+git clone https://github.com/itssatria/HoverWallpaper.git
 cd HoverWallpaper
 ```
 
@@ -237,7 +239,7 @@ This project has not yet been validated across a range of Windows 11 devices. Te
 
 Ideas for future versions:
 
-- [ ] Visual hover-zone editor with drag-to-select.
+- [x] Visual hover-zone editor with drag-to-select.
 - [ ] Multiple hover zones with independent alternate images.
 - [ ] Smooth fade transitions.
 - [ ] Per-monitor image and hover-zone configuration.

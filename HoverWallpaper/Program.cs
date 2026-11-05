@@ -110,45 +110,150 @@ public sealed class SettingsForm : Form
     readonly NumericUpDown w = Num(1, 100, 25), h = Num(1, 100, 35);
     readonly CheckBox startup = new() { Text = "Launch when I sign in to Windows", AutoSize = true };
     readonly Label status = new() { AutoSize = true, ForeColor = Color.DarkGreen };
+    readonly Panel previewPanel = new() { Height = 140, Width = 250, Cursor = Cursors.Hand };
     WallpaperWindow? wallpaper;
+    Image? previewImage;
 
     static NumericUpDown Num(int min, int max, int value) => new() { Minimum = min, Maximum = max, Value = value, Width = 75 };
     public SettingsForm()
     {
-        Text = "Hover Wallpaper"; Width = 590; Height = 390;
+        Text = "Hover Wallpaper"; Width = 640; Height = 560;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
         img1.Text = settings.Image1; img2.Text = settings.Image2;
         x.Value = settings.X; y.Value = settings.Y; w.Value = settings.Width; h.Value = settings.Height;
         startup.Checked = settings.StartWithWindows;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 3, RowCount = 9 };
+
+        // Repaint preview when coordinates change
+        x.ValueChanged += (_, _) => previewPanel.Invalidate();
+        y.ValueChanged += (_, _) => previewPanel.Invalidate();
+        w.ValueChanged += (_, _) => previewPanel.Invalidate();
+        h.ValueChanged += (_, _) => previewPanel.Invalidate();
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(18), ColumnCount = 3, RowCount = 10 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         Controls.Add(layout);
+
         AddRow(layout, 0, "Image 1 (normal)", img1, PickButton(() => Pick(img1)));
         AddRow(layout, 1, "Image 2 (hover)", img2, PickButton(() => Pick(img2)));
+
         var region = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
+        var btnVisualEditor = new Button { Text = "Visual Editor…", AutoSize = true, Height = 28, Margin = new Padding(8, 5, 0, 0) };
+        btnVisualEditor.Click += (_, _) => OpenVisualZoneEditor();
+
         region.Controls.AddRange(new Control[] {
             new Label { Text="X %", AutoSize=true, Padding=new Padding(0,7,0,0) }, x,
             new Label { Text="Y %", AutoSize=true, Padding=new Padding(0,7,0,0) }, y,
             new Label { Text="Width %", AutoSize=true, Padding=new Padding(0,7,0,0) }, w,
-            new Label { Text="Height %", AutoSize=true, Padding=new Padding(0,7,0,0) }, h });
+            new Label { Text="Height %", AutoSize=true, Padding=new Padding(0,7,0,0) }, h,
+            btnVisualEditor
+        });
         layout.Controls.Add(new Label { Text = "Hover area", AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, 2);
         layout.Controls.Add(region, 1, 2); layout.SetColumnSpan(region, 2);
-        var help = new Label { Text = "The hover area is measured from the top-left of your desktop. Values are percentages of the full screen.", AutoSize = true, MaximumSize = new Size(510, 0) };
-        layout.Controls.Add(help, 0, 3); layout.SetColumnSpan(help, 3);
-        layout.Controls.Add(startup, 0, 4); layout.SetColumnSpan(startup, 3);
+
+        // Visual preview panel setup
+        previewPanel.Paint += OnPreviewPaint;
+        previewPanel.Click += (_, _) => OpenVisualZoneEditor();
+        var previewContainer = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown };
+        var previewHint = new Label { Text = "Preview (click to edit zone visually):", AutoSize = true, Margin = new Padding(0, 4, 0, 4), ForeColor = Color.DimGray };
+        previewContainer.Controls.AddRange(new Control[] { previewHint, previewPanel });
+        layout.Controls.Add(previewContainer, 1, 3); layout.SetColumnSpan(previewContainer, 2);
+
+        var help = new Label { Text = "The hover area is measured from the top-left of your desktop. Values are percentages of the full screen.", AutoSize = true, MaximumSize = new Size(580, 0) };
+        layout.Controls.Add(help, 0, 4); layout.SetColumnSpan(help, 3);
+        layout.Controls.Add(startup, 0, 5); layout.SetColumnSpan(startup, 3);
+
         var buttons = new FlowLayoutPanel { AutoSize = true };
         var apply = new Button { Text = "Apply wallpaper", AutoSize = true, Height = 36 };
         apply.Click += (_, _) => ApplyWallpaper();
         var stop = new Button { Text = "Stop", AutoSize = true, Height = 36 };
         stop.Click += (_, _) => { wallpaper?.Close(); wallpaper = null; status.Text = "Wallpaper stopped."; };
         buttons.Controls.AddRange(new Control[] { apply, stop });
-        layout.Controls.Add(buttons, 0, 5); layout.SetColumnSpan(buttons, 3);
-        layout.Controls.Add(status, 0, 6); layout.SetColumnSpan(status, 3);
-        FormClosing += (_, _) => wallpaper?.Close();
+        layout.Controls.Add(buttons, 0, 6); layout.SetColumnSpan(buttons, 3);
+        layout.Controls.Add(status, 0, 7); layout.SetColumnSpan(status, 3);
+
+        LoadPreviewImage();
+        FormClosing += (_, _) =>
+        {
+            wallpaper?.Close();
+            previewImage?.Dispose();
+        };
     }
+
+    void LoadPreviewImage()
+    {
+        previewImage?.Dispose();
+        previewImage = null;
+        string path = !string.IsNullOrWhiteSpace(img1.Text) && File.Exists(img1.Text) ? img1.Text : img2.Text;
+        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var temp = Image.FromStream(stream);
+                previewImage = new Bitmap(temp);
+            }
+            catch { }
+        }
+        previewPanel.Invalidate();
+    }
+
+    void OnPreviewPaint(object? sender, PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        var r = previewPanel.ClientRectangle;
+
+        if (previewImage != null)
+        {
+            g.DrawImage(previewImage, r);
+        }
+        else
+        {
+            using var bg = new SolidBrush(Color.FromArgb(240, 240, 243));
+            g.FillRectangle(bg, r);
+            using var textBrush = new SolidBrush(Color.Gray);
+            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            g.DrawString("Select an image to preview", Font, textBrush, r, sf);
+        }
+
+        // Draw hover area highlight
+        int zx = (int)Math.Round(r.Width * ((double)x.Value / 100.0));
+        int zy = (int)Math.Round(r.Height * ((double)y.Value / 100.0));
+        int zw = Math.Max(1, (int)Math.Round(r.Width * ((double)w.Value / 100.0)));
+        int zh = Math.Max(1, (int)Math.Round(r.Height * ((double)h.Value / 100.0)));
+        var zoneRect = new Rectangle(zx, zy, zw, zh);
+
+        using var fillBrush = new SolidBrush(Color.FromArgb(70, 0, 120, 215));
+        g.FillRectangle(fillBrush, zoneRect);
+        using var pen = new Pen(Color.FromArgb(0, 120, 215), 1.5f);
+        g.DrawRectangle(pen, zoneRect);
+
+        // Border around preview box
+        using var borderPen = new Pen(Color.LightGray);
+        g.DrawRectangle(borderPen, 0, 0, r.Width - 1, r.Height - 1);
+    }
+
+    void OpenVisualZoneEditor()
+    {
+        if (string.IsNullOrWhiteSpace(img1.Text) && string.IsNullOrWhiteSpace(img2.Text))
+        {
+            MessageBox.Show(this, "Please choose at least Image 1 before opening the visual editor.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var editor = new ZoneEditorForm(img1.Text, img2.Text, (int)x.Value, (int)y.Value, (int)w.Value, (int)h.Value);
+        if (editor.ShowDialog(this) == DialogResult.OK)
+        {
+            x.Value = editor.ResultX;
+            y.Value = editor.ResultY;
+            w.Value = editor.ResultWidth;
+            h.Value = editor.ResultHeight;
+            previewPanel.Invalidate();
+        }
+    }
+
     static void AddRow(TableLayoutPanel p, int row, string label, Control field, Control button)
     {
         p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0, 8, 12, 0) }, 0, row);
@@ -158,7 +263,11 @@ public sealed class SettingsForm : Form
     void Pick(TextBox box)
     {
         using var dialog = new OpenFileDialog { Filter = "Image files|*.jpg;*.jpeg;*.png;*.bmp;*.webp|All files|*.*" };
-        if (dialog.ShowDialog(this) == DialogResult.OK) box.Text = dialog.FileName;
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            box.Text = dialog.FileName;
+            LoadPreviewImage();
+        }
     }
     void ApplyWallpaper()
     {
@@ -191,7 +300,7 @@ public sealed class WallpaperWindow : Form
     public WallpaperWindow(AppSettings s)
     {
         settings = s;
-        normal = Image.FromFile(s.Image1); hover = Image.FromFile(s.Image2);
+        normal = LoadSafeImage(s.Image1); hover = LoadSafeImage(s.Image2);
         picture.Image = normal;
         Controls.Add(picture);
         FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false;
@@ -200,6 +309,17 @@ public sealed class WallpaperWindow : Form
         Load += (_, _) => AttachToDesktop();
         timer.Tick += (_, _) => UpdateHover();
         timer.Start();
+    }
+    static Image? LoadSafeImage(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return null;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var temp = Image.FromStream(stream);
+            return new Bitmap(temp);
+        }
+        catch { return null; }
     }
     void AttachToDesktop()
     {
