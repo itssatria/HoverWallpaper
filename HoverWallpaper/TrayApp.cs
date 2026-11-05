@@ -8,12 +8,12 @@ public sealed class TrayApp : ApplicationContext
     readonly SynchronizationContext ui;
     readonly RegisteredWaitHandle showWait;
     WallpaperWindow? wallpaper;
-    SettingsForm? form;
+    SettingsWindow? form;
     bool balloonShown;
 
     public bool IsExiting { get; private set; }
 
-    public TrayApp(bool startHidden, EventWaitHandle showEvent)
+    public TrayApp(bool startHidden, EventWaitHandle showEvent, bool startWallpaper = true)
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open Hover Wallpaper", null, (_, _) => ShowSettings());
@@ -22,7 +22,7 @@ public sealed class TrayApp : ApplicationContext
         tray = new NotifyIcon
         {
             Text = "Hover Wallpaper",
-            Icon = LoadIcon(),
+            Icon = AppAssets.AppIcon,
             ContextMenuStrip = menu,
             Visible = true
         };
@@ -34,7 +34,7 @@ public sealed class TrayApp : ApplicationContext
             (_, _) => ui.Post(_ => ShowSettings(), null), null, Timeout.Infinite, false);
 
         var settings = AppSettings.Load();
-        bool started = settings.HasImages && TryStart(settings, out _);
+        bool started = startWallpaper && settings.HasImages && TryStart(settings, out _);
         if (!startHidden || !started) ShowSettings();
     }
     public bool IsRunning => wallpaper is { IsDisposed: false };
@@ -63,12 +63,25 @@ public sealed class TrayApp : ApplicationContext
         wallpaper = null;
     }
 
+    // The settings window is WPF, so it lives on the WPF dispatcher. This app runs on the
+    // WinForms loop; both use the same STA thread, so the dispatcher runs when it is created.
     public void ShowSettings()
     {
-        if (form == null || form.IsDisposed) form = new SettingsForm(this);
-        if (!form.Visible) form.Show();
-        if (form.WindowState == FormWindowState.Minimized) form.WindowState = FormWindowState.Normal;
-        form.Activate();
+        if (System.Windows.Application.Current == null) return;
+        System.Windows.Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (form == null || form.IsClosed)
+            {
+                form = new SettingsWindow(this);
+                // Lets WinForms dialogs (zone/crop editors) and their shortcuts work
+                // while a WPF window is open.
+                System.Windows.Forms.Integration.ElementHost.EnableModelessKeyboardInterop(form);
+            }
+            if (!form.IsVisible) form.Show();
+            if (form.WindowState == System.Windows.WindowState.Minimized)
+                form.WindowState = System.Windows.WindowState.Normal;
+            form.Activate();
+        });
     }
 
     public void NotifyHiddenToTray()
@@ -84,12 +97,6 @@ public sealed class TrayApp : ApplicationContext
         ExitThread();
     }
 
-    static Icon LoadIcon()
-    {
-        try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application; }
-        catch { return SystemIcons.Application; }
-    }
-
     protected override void ExitThreadCore()
     {
         IsExiting = true;
@@ -97,7 +104,8 @@ public sealed class TrayApp : ApplicationContext
         tray.Visible = false;
         tray.Dispose();
         Stop();
-        if (form is { IsDisposed: false }) form.Close();
+        if (System.Windows.Application.Current != null && form is { IsClosed: false })
+            System.Windows.Application.Current.Dispatcher.Invoke(() => form.Close());
         base.ExitThreadCore();
     }
 }

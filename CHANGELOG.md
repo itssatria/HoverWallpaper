@@ -5,15 +5,20 @@ All notable changes to Hover Wallpaper are listed here. The newest release is fi
 ## v1.0 - 2026-11-05
 
 ### Added
+- **Windows 11 Fluent settings window.** Replaced the plain settings form with a Mica-backed Fluent UI and thumbnail cards for both wallpaper images; click a preview or Choose image to browse.
 - **Per-image fit options.** Image 1 and Image 2 each get their own fit: Fill, Fit, Stretch, Tile, Center, or Custom crop.
 - **Custom crop editor.** Drag a crop rectangle over the image. The rectangle is locked to your screen's shape, so the result is not distorted. Choosing a new file resets that image's crop.
 - **Close to tray.** Closing the settings window keeps the wallpaper running in the system tray. Use the tray menu to open the settings or exit.
 - **Single instance.** Starting the app again opens the settings of the running copy instead of starting a second one.
 - Fit and crop settings are saved in `settings.json`.
 - The tray icon now uses the app icon.
+- App logo at the top of the settings window. The logo and icon are built into the exe.
 - Changelog.
 
 ### Fixed
+- **The hover-zone preview ignored the fit setting.** The settings preview and the visual zone editor now show Image 1 and Image 2 with their fit and crop applied, so the zone you draw matches the real wallpaper.
+- **Buttons were off-screen at 125% display scaling.** Apply crop, Apply Selection and Cancel in the crop and zone editors are now docked to the right edge and always visible.
+- **Build script could not find Inno Setup** when it was installed per user by winget. `build.ps1` now also checks `%LOCALAPPDATA%\Programs`, `Program Files` and `PATH`.
 - **Apply did nothing on Windows 11 24H2 and newer.** On these builds the desktop icons are a child of `Progman`, not of a separate `WorkerW` window, so the wallpaper window was attached to the wrong place. It now attaches to `Progman`, directly under the icons.
 - **The wallpaper window was never painted.** Windows does not draw a plain child window there. The window is now layered, so it shows up.
 - **Start with Windows was registered incorrectly.** The registry key path and the quoted command were written with doubled backslashes, so the startup entry did not point to the app.

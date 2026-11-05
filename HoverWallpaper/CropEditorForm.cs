@@ -40,12 +40,16 @@ public sealed class CropEditorForm : Form
 
         info = new Label { AutoSize = true, Location = new Point(14, 20) };
         var bottom = new Panel { Dock = DockStyle.Bottom, Height = 60, BackColor = Color.FromArgb(245, 245, 247) };
-        const AnchorStyles br = AnchorStyles.Bottom | AnchorStyles.Right;
-        var reset = new Button { Text = "Reset", Width = 80, Height = 36, Location = new Point(Width - 375, 12), Anchor = br };
-        var ok = new Button { Text = "Apply crop", DialogResult = DialogResult.OK, Width = 120, Height = 36, Location = new Point(Width - 285, 12), Anchor = br, Enabled = image != null };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 95, Height = 36, Location = new Point(Width - 150, 12), Anchor = br };
+        // Docked to the right edge so the buttons stay visible at any window size or DPI scaling.
+        var reset = new Button { Text = "Reset", AutoSize = true, MinimumSize = new Size(80, 36), Margin = new Padding(4, 0, 4, 0) };
+        var ok = new Button { Text = "Apply crop", DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(120, 36), Margin = new Padding(4, 0, 4, 0), Enabled = image != null };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(95, 36), Margin = new Padding(4, 0, 0, 0) };
         reset.Click += (_, _) => ResetRect();
-        bottom.Controls.AddRange(new Control[] { info, reset, ok, cancel });
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 12, 14, 0) };
+        buttons.Controls.AddRange(new Control[] { reset, ok, cancel });
+        bottom.Controls.Add(buttons);
+        bottom.Controls.Add(info);
+        AcceptButton = ok;
         Controls.Add(canvas);
         Controls.Add(bottom);
         CancelButton = cancel;

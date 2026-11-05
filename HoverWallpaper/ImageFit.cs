@@ -35,6 +35,13 @@ public static class FitModes
 
 public static class ImageRenderer
 {
+    /// <summary>Loads a file and renders it exactly as the wallpaper will look. Null on failure.</summary>
+    public static Bitmap? RenderFile(string? path, Size target, FitMode mode, CropRect? crop, out string? error)
+    {
+        using var src = ImageHelper.LoadSafeImage(path, out error);
+        return src == null ? null : Render(src, target, mode, crop);
+    }
+
     /// <summary>Renders <paramref name="src"/> onto a new bitmap of <paramref name="target"/> size.</summary>
     public static Bitmap Render(Image src, Size target, FitMode mode, CropRect? crop)
     {

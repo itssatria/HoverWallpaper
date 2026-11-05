@@ -1,3 +1,4 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -22,7 +23,28 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+
+        // WPF application object hosts the WPF-UI theme resources. The WinForms loop below
+        // still owns the process (tray icon, wallpaper window, zone/crop editors).
+        var wpfApp = new App();
+        wpfApp.InitializeComponent();
+
         bool startHidden = args.Contains("--startup", StringComparer.OrdinalIgnoreCase);
+
+#if DEBUG
+        // Dev helper: render the settings window to a PNG so the layout can be checked
+        // without a human looking at the screen. Release builds do not contain this.
+        var shotPath = Environment.GetEnvironmentVariable("HW_SHOT");
+        if (shotPath != null)
+        {
+            // No wallpaper window here: a screenshot must not take over the real desktop.
+            var shotApp = new TrayApp(false, showEvent, startWallpaper: false);
+            Shot.Run(shotApp, shotPath);
+            shotApp.ExitApp();
+            return;
+        }
+#endif
+
         Application.Run(new TrayApp(startHidden, showEvent));
     }
 }
@@ -106,264 +128,6 @@ internal static class StartupRegistration
             key.SetValue(ValueName, $"\"{Application.ExecutablePath}\" --startup");
         else
             key.DeleteValue(ValueName, throwOnMissingValue: false);
-    }
-}
-
-// ──────────────────────────────────────────────────────────
-// Settings UI form
-// ──────────────────────────────────────────────────────────
-public sealed class SettingsForm : Form
-{
-    readonly AppSettings settings = AppSettings.Load();
-    readonly TextBox img1 = new() { Width = 330, ReadOnly = true };
-    readonly TextBox img2 = new() { Width = 330, ReadOnly = true };
-    readonly NumericUpDown x = Num(0, 100, 60), y = Num(0, 100, 30);
-    readonly NumericUpDown w = Num(1, 100, 25), h = Num(1, 100, 35);
-    readonly CheckBox startup = new() { Text = "Launch when I sign in to Windows", AutoSize = true };
-    readonly Label status = new() { AutoSize = true, ForeColor = Color.DarkGreen };
-    readonly Panel previewPanel = new() { Height = 140, Width = 250, Cursor = Cursors.Hand };
-    readonly TrayApp app;
-    readonly ComboBox fit1 = FitCombo(), fit2 = FitCombo();
-    readonly Button crop1Btn = new() { Text = "Crop…", AutoSize = true, Visible = false };
-    readonly Button crop2Btn = new() { Text = "Crop…", AutoSize = true, Visible = false };
-    Image? previewImage;
-    string? previewError;
-
-    static ComboBox FitCombo()
-    {
-        var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 230 };
-        c.Items.AddRange(FitModes.Labels);
-        return c;
-    }
-
-    static NumericUpDown Num(int min, int max, int value) =>
-        new() { Minimum = min, Maximum = max, Value = value, Width = 75 };
-
-    public SettingsForm(TrayApp app)
-    {
-        this.app = app;
-        Text = "Hover Wallpaper"; Width = 640; Height = 560;
-        FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen;
-
-        img1.Text = settings.Image1; img2.Text = settings.Image2;
-        x.Value = settings.X; y.Value = settings.Y;
-        w.Value = settings.Width; h.Value = settings.Height;
-        startup.Checked = settings.StartWithWindows;
-        fit1.SelectedIndex = (int)settings.Fit1; fit2.SelectedIndex = (int)settings.Fit2;
-        fit1.SelectedIndexChanged += (_, _) => UpdateCropButtons();
-        fit2.SelectedIndexChanged += (_, _) => UpdateCropButtons();
-        crop1Btn.Click += (_, _) => EditCrop(img1, settings.Crop1);
-        crop2Btn.Click += (_, _) => EditCrop(img2, settings.Crop2);
-        UpdateCropButtons();
-
-        x.ValueChanged += (_, _) => previewPanel.Invalidate();
-        y.ValueChanged += (_, _) => previewPanel.Invalidate();
-        w.ValueChanged += (_, _) => previewPanel.Invalidate();
-        h.ValueChanged += (_, _) => previewPanel.Invalidate();
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, Padding = new Padding(18),
-            ColumnCount = 3, RowCount = 12
-        };
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        Controls.Add(layout);
-
-        AddRow(layout, 0, "Image 1 (normal)", img1, BrowseBtn(() => Pick(img1, isImage1: true)));
-        AddRow(layout, 1, "Image 2 (hover)",  img2, BrowseBtn(() => Pick(img2, isImage1: false)));
-
-        AddFitRow(layout, 2, "Image 1 fit", fit1, crop1Btn);
-        AddFitRow(layout, 3, "Image 2 fit", fit2, crop2Btn);
-
-        var btnVisualEditor = new Button { Text = "Visual Editor…", AutoSize = true, Height = 28, Margin = new Padding(8, 5, 0, 0) };
-        btnVisualEditor.Click += (_, _) => OpenVisualZoneEditor();
-
-        var region = new FlowLayoutPanel { AutoSize = true, WrapContents = false };
-        region.Controls.AddRange(new Control[] {
-            new Label { Text = "X %",      AutoSize = true, Padding = new Padding(0,7,0,0) }, x,
-            new Label { Text = "Y %",      AutoSize = true, Padding = new Padding(0,7,0,0) }, y,
-            new Label { Text = "Width %",  AutoSize = true, Padding = new Padding(0,7,0,0) }, w,
-            new Label { Text = "Height %", AutoSize = true, Padding = new Padding(0,7,0,0) }, h,
-            btnVisualEditor
-        });
-        layout.Controls.Add(new Label { Text = "Hover area", AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, 4);
-        layout.Controls.Add(region, 1, 4); layout.SetColumnSpan(region, 2);
-
-        previewPanel.Paint += OnPreviewPaint;
-        previewPanel.Click += (_, _) => OpenVisualZoneEditor();
-        var previewHint = new Label { Text = "Preview of Image 1 (click to edit zone visually):", AutoSize = true, Margin = new Padding(0,4,0,4), ForeColor = Color.DimGray };
-        var previewContainer = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown };
-        previewContainer.Controls.AddRange(new Control[] { previewHint, previewPanel });
-        layout.Controls.Add(previewContainer, 1, 5); layout.SetColumnSpan(previewContainer, 2);
-
-        var help = new Label { Text = "The hover area is measured from the top-left of your desktop. Values are percentages of the full screen.", AutoSize = true, MaximumSize = new Size(580, 0) };
-        layout.Controls.Add(help, 0, 6); layout.SetColumnSpan(help, 3);
-        layout.Controls.Add(startup, 0, 7); layout.SetColumnSpan(startup, 3);
-
-        var applyBtn = new Button { Text = "Apply wallpaper", AutoSize = true, Height = 36 };
-        applyBtn.Click += (_, _) => ApplyWallpaper();
-        var stopBtn = new Button { Text = "Stop", AutoSize = true, Height = 36 };
-        stopBtn.Click += (_, _) => { app.Stop(); status.Text = "Wallpaper stopped."; status.ForeColor = Color.DarkGreen; };
-
-        var buttons = new FlowLayoutPanel { AutoSize = true };
-        buttons.Controls.AddRange(new Control[] { applyBtn, stopBtn });
-        layout.Controls.Add(buttons, 0, 8); layout.SetColumnSpan(buttons, 3);
-        layout.Controls.Add(status, 0, 9); layout.SetColumnSpan(status, 3);
-
-        LoadPreviewImage();
-        FormClosing += (_, e) =>
-        {
-            // Closing the window keeps the wallpaper running in the tray; use the tray menu to exit.
-            if (e.CloseReason == CloseReason.UserClosing && !app.IsExiting)
-            {
-                e.Cancel = true;
-                Hide();
-                app.NotifyHiddenToTray();
-                return;
-            }
-            previewImage?.Dispose();
-        };
-    }
-
-    void LoadPreviewImage()
-    {
-        previewImage?.Dispose(); previewImage = null; previewError = null;
-        string path = img1.Text.Trim('"', ' ');
-        if (!string.IsNullOrWhiteSpace(path))
-            previewImage = ImageHelper.LoadSafeImage(path, out previewError);
-        previewPanel.Invalidate();
-    }
-
-    void OnPreviewPaint(object? sender, PaintEventArgs e)
-    {
-        var g = e.Graphics;
-        var r = previewPanel.ClientRectangle;
-
-        if (previewImage != null)
-        {
-            g.DrawImage(previewImage, r);
-            int zx = (int)Math.Round(r.Width  * (double)x.Value / 100.0);
-            int zy = (int)Math.Round(r.Height * (double)y.Value / 100.0);
-            int zw = Math.Max(1, (int)Math.Round(r.Width  * (double)w.Value / 100.0));
-            int zh = Math.Max(1, (int)Math.Round(r.Height * (double)h.Value / 100.0));
-            using var fill = new SolidBrush(Color.FromArgb(70, 0, 120, 215));
-            g.FillRectangle(fill, zx, zy, zw, zh);
-            using var pen = new Pen(Color.FromArgb(0, 120, 215), 1.5f);
-            g.DrawRectangle(pen, zx, zy, zw, zh);
-        }
-        else
-        {
-            using var bg = new SolidBrush(previewError != null ? Color.FromArgb(255,240,240) : Color.FromArgb(240,240,243));
-            g.FillRectangle(bg, r);
-            using var tb = new SolidBrush(previewError != null ? Color.DarkRed : Color.Gray);
-            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString(previewError != null ? $"Image 1 error:\n{previewError}" : "Select Image 1 to preview", Font, tb, r, sf);
-        }
-
-        using var border = new Pen(previewError != null ? Color.Salmon : Color.LightGray);
-        g.DrawRectangle(border, 0, 0, r.Width - 1, r.Height - 1);
-    }
-
-    void OpenVisualZoneEditor()
-    {
-        if (string.IsNullOrWhiteSpace(img1.Text) && string.IsNullOrWhiteSpace(img2.Text))
-        {
-            MessageBox.Show(this, "Please choose at least Image 1 first.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        using var editor = new ZoneEditorForm(img1.Text, img2.Text, (int)x.Value, (int)y.Value, (int)w.Value, (int)h.Value);
-        if (editor.ShowDialog(this) == DialogResult.OK)
-        {
-            x.Value = editor.ResultX; y.Value = editor.ResultY;
-            w.Value = editor.ResultWidth; h.Value = editor.ResultHeight;
-            previewPanel.Invalidate();
-        }
-    }
-
-    static void AddRow(TableLayoutPanel p, int row, string label, Control field, Control btn)
-    {
-        p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, row);
-        p.Controls.Add(field, 1, row);
-        p.Controls.Add(btn,   2, row);
-    }
-    static void AddFitRow(TableLayoutPanel p, int row, string label, ComboBox combo, Button crop)
-    {
-        p.Controls.Add(new Label { Text = label, AutoSize = true, Padding = new Padding(0,8,12,0) }, 0, row);
-        p.Controls.Add(combo, 1, row);
-        p.Controls.Add(crop, 2, row);
-    }
-
-    void UpdateCropButtons()
-    {
-        crop1Btn.Visible = fit1.SelectedIndex == (int)FitMode.Custom;
-        crop2Btn.Visible = fit2.SelectedIndex == (int)FitMode.Custom;
-    }
-
-    void EditCrop(TextBox box, CropRect current)
-    {
-        string path = box.Text.Trim('"', ' ');
-        if (!File.Exists(path))
-        {
-            MessageBox.Show(this, "Choose the image first.", "Image required", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-        using var editor = new CropEditorForm(path, current);
-        if (editor.ShowDialog(this) != DialogResult.OK) return;
-        var r = editor.Result;
-        current.X = r.X; current.Y = r.Y; current.W = r.W; current.H = r.H;
-    }
-
-    static Button BrowseBtn(Action action)
-    {
-        var b = new Button { Text = "Browse…", AutoSize = true };
-        b.Click += (_, _) => action();
-        return b;
-    }
-    void Pick(TextBox box, bool isImage1)
-    {
-        using var dlg = new OpenFileDialog { Filter = "Supported images|*.jpg;*.jpeg;*.png;*.bmp|All files|*.*" };
-        if (dlg.ShowDialog(this) == DialogResult.OK)
-        {
-            box.Text = dlg.FileName;
-            var crop = isImage1 ? settings.Crop1 : settings.Crop2;
-            crop.X = 0; crop.Y = 0; crop.W = 100; crop.H = 100;
-            if (isImage1) LoadPreviewImage();
-        }
-    }
-    void ApplyWallpaper()
-    {
-        string p1 = img1.Text.Trim('"', ' ');
-        string p2 = img2.Text.Trim('"', ' ');
-        if (string.IsNullOrWhiteSpace(p1) || string.IsNullOrWhiteSpace(p2))
-        {
-            MessageBox.Show(this, "Please choose valid files for both images.", "Images required", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-        using (ImageHelper.LoadSafeImage(p1, out var e1)) { if (e1 != null) { MessageBox.Show(this, $"Image 1 error:\n{e1}", "Image 1", MessageBoxButtons.OK, MessageBoxIcon.Error); return; } }
-        using (ImageHelper.LoadSafeImage(p2, out var e2)) { if (e2 != null) { MessageBox.Show(this, $"Image 2 error:\n{e2}", "Image 2", MessageBoxButtons.OK, MessageBoxIcon.Error); return; } }
-
-        settings.Image1 = p1; settings.Image2 = p2;
-        settings.X = (int)x.Value; settings.Y = (int)y.Value;
-        settings.Width = (int)w.Value; settings.Height = (int)h.Value;
-        settings.StartWithWindows = startup.Checked;
-        settings.Fit1 = (FitMode)fit1.SelectedIndex; settings.Fit2 = (FitMode)fit2.SelectedIndex;
-        settings.Save();
-        StartupRegistration.SetEnabled(startup.Checked);
-
-        if (app.TryStart(settings, out var err))
-        {
-            status.Text = "Wallpaper applied. Closing this window keeps it running in the tray.";
-            status.ForeColor = Color.DarkGreen;
-        }
-        else
-        {
-            status.Text = $"Error: {err}";
-            status.ForeColor = Color.DarkRed;
-            MessageBox.Show(this, err, "Could not apply wallpaper", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
     }
 }
 

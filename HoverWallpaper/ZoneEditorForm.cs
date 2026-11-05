@@ -31,7 +31,7 @@ public sealed class ZoneEditorForm : Form
     public int ResultWidth => zoneWidth;
     public int ResultHeight => zoneHeight;
 
-    public ZoneEditorForm(string? image1Path, string? image2Path, int initialX, int initialY, int initialW, int initialH)
+    public ZoneEditorForm(string? image1Path, string? image2Path, FitMode fit1, CropRect crop1, FitMode fit2, CropRect crop2, int initialX, int initialY, int initialW, int initialH)
     {
         Text = "Visual Hover-Zone Editor - Drag to Select Area";
         Width = 960;
@@ -47,8 +47,10 @@ public sealed class ZoneEditorForm : Form
         var vs = SystemInformation.VirtualScreen;
         desktopAspectRatio = (double)vs.Width / Math.Max(1, vs.Height);
 
-        image1 = ImageHelper.LoadSafeImage(image1Path, out error1);
-        image2 = ImageHelper.LoadSafeImage(image2Path, out error2);
+        // Show both images exactly as the wallpaper renders them (fit and crop applied),
+        // so the zone drawn here matches what you see on the desktop.
+        image1 = ImageRenderer.RenderFile(image1Path?.Trim('"', ' '), vs.Size, fit1, crop1, out error1);
+        image2 = ImageRenderer.RenderFile(image2Path?.Trim('"', ' '), vs.Size, fit2, crop2, out error2);
 
         // Canvas for drawing
         canvas = new DoubleBufferedPanel
@@ -137,8 +139,8 @@ public sealed class ZoneEditorForm : Form
             Font = new Font(FontFamily.GenericSansSerif, 9.5f, FontStyle.Regular)
         };
 
-        var btnOk = new Button { Text = "Apply Selection", DialogResult = DialogResult.OK, Width = 130, Height = 36, Location = new Point(Width - 280, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
-        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 95, Height = 36, Location = new Point(Width - 135, 12), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        var btnOk = new Button { Text = "Apply Selection", DialogResult = DialogResult.OK, AutoSize = true, MinimumSize = new Size(130, 36), Margin = new Padding(4, 0, 4, 0) };
+        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(95, 36), Margin = new Padding(4, 0, 0, 0) };
 
         btnOk.Click += (_, _) =>
         {
@@ -149,13 +151,18 @@ public sealed class ZoneEditorForm : Form
         btnCancel.Click += (_, _) => Close();
 
         // Preset buttons
-        var btnPresetCenter = new Button { Text = "Center (50%)", AutoSize = true, Height = 30, Location = new Point(Width - 530, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        var btnPresetCenter = new Button { Text = "Center (50%)", AutoSize = true, MinimumSize = new Size(0, 36), Margin = new Padding(4, 0, 4, 0) };
         btnPresetCenter.Click += (_, _) => SetZone(25, 25, 50, 50);
 
-        var btnPresetFull = new Button { Text = "Full Screen", AutoSize = true, Height = 30, Location = new Point(Width - 435, 15), Anchor = AnchorStyles.Bottom | AnchorStyles.Right };
+        var btnPresetFull = new Button { Text = "Full Screen", AutoSize = true, MinimumSize = new Size(0, 36), Margin = new Padding(4, 0, 12, 0) };
         btnPresetFull.Click += (_, _) => SetZone(0, 0, 100, 100);
 
-        bottomBar.Controls.AddRange(new Control[] { lblCoords, btnPresetCenter, btnPresetFull, btnOk, btnCancel });
+        // Docked to the right edge so the buttons stay visible at any window size or DPI scaling.
+        var buttons = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Padding = new Padding(0, 0, 0, 0) };
+        buttons.Controls.AddRange(new Control[] { btnPresetCenter, btnPresetFull, btnOk, btnCancel });
+        bottomBar.Controls.Add(buttons);
+        bottomBar.Controls.Add(lblCoords);
+        AcceptButton = btnOk;
 
         Controls.Add(canvas);
         Controls.Add(topBar);
@@ -233,6 +240,7 @@ public sealed class ZoneEditorForm : Form
 
         if (currentImage != null)
         {
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             g.DrawImage(currentImage, imgBounds);
         }
         else
