@@ -274,5 +274,3 @@ No open-source license has been selected yet. Until a license is added, all righ
 Made for Windows 11.
 
 </div>
-#   H o v e r W a l l p a p e r  
- 
