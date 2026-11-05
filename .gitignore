@@ -19,3 +19,4 @@ Desktop.ini
 # Local user data / secrets
 *.log
 .claude/
+.claude/worktrees/agent-ae61fd26cbf18c778
