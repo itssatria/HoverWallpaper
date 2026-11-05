@@ -31,6 +31,7 @@ Set a normal wallpaper, add hover zones with their own images, and reveal the ma
 | **Automatic restore** | Leaving all hover zones switches back to Image 1. |
 | **Fade animation** | Optionally cross-fade into and out of hover images, with independently adjustable fade-in and fade-out durations. |
 | **Configurable hover zones** | Add or remove zones and set each area's X position, Y position, width, and height as percentages of the virtual desktop. |
+| **Saved presets** | Name and save the whole scene — Image 1, every zone's image, fit, crop and area, plus fade settings — then load or delete presets later. |
 | **Close to tray** | Closing the settings window keeps the wallpaper running in the system tray. Use the tray menu to open settings or exit. |
 | **Single instance** | Launching the app again opens the settings of the running copy instead of starting a second one. |
 | **Common image formats** | Supports JPG, JPEG, PNG, BMP, and WebP file selection. Actual decoding depends on Windows image codec support. |
@@ -46,9 +47,10 @@ Set a normal wallpaper, add hover zones with their own images, and reveal the ma
 3. **Add more zones if needed** — each zone gets its own image and screen area.
 4. **Pick a fit for each image** — Fill, Fit, Stretch, Tile, Center, or Custom crop.
 5. **Define each hover area** — position and size are percentages of the full virtual desktop.
-6. **Apply** — the app displays Image 1 and monitors the mouse position.
-7. **Hover** — entering a zone shows its assigned image; leaving all zones restores Image 1. If zones overlap, the first zone in the list takes priority.
-8. **Close the window** — the wallpaper keeps running from the system tray.
+6. **Save a preset (optional)** — name the current scene in **Presets → Preset name** and click **Save preset**. Loading a preset restores every image, fit, crop, zone area and fade setting.
+7. **Apply** — the app displays Image 1 and monitors the mouse position.
+8. **Hover** — entering a zone shows its assigned image; leaving all zones restores Image 1. If zones overlap, the first zone in the list takes priority.
+9. **Close the window** — the wallpaper keeps running from the system tray.
 
 ### Fade animation
 
@@ -80,6 +82,17 @@ The app starts with one zone. Add more zones from Settings; each one has its own
 
 > **Tip:** Use two images with the same dimensions and composition for the cleanest visual switch. If the two images use different fit options, the picture can shift when the cursor enters the zone.
 
+### Presets
+
+Presets save a complete scene, so you can keep several wallpaper setups and switch between them:
+
+- **What is saved** — Image 1 with its fit and crop, every hover zone with its image, fit, crop, X/Y/width/height, the fade toggle and both fade durations. Your Windows-startup preference is an app setting, not part of a scene, and is left alone.
+- **Save preset** — type a name and press **Enter** or click **Save preset**. If the name already exists, the app asks before replacing it. Empty or unreadable image paths trigger a confirmation, so you can still save a work-in-progress scene.
+- **Load** — restores the scene into the editor. Nothing changes on the desktop until you click **Apply**, and the name field is prefilled so you can save over that preset easily.
+- **Delete** — removes the preset from the list after a confirmation.
+
+Presets are independent of the active configuration: loading one does not change `settings.json` until you apply.
+
 ## 📦 Project structure
 
 ```text
@@ -95,6 +108,7 @@ HoverWallpaper/
 │   ├── Program.cs                  # Entry point, settings model, wallpaper window
 │   ├── SettingsWindow.xaml(.cs)    # Fluent settings: Image 1 plus a list of hover zones
 │   ├── ZoneCard.xaml(.cs)          # Per-zone card: image, fit/crop, area and preview
+│   ├── Presets.cs                  # Saved scenes (preset model and presets.json store)
 │   ├── TrayApp.cs                  # Tray icon, wallpaper lifetime, single-instance handling
 │   ├── ImageFit.cs                 # Fit modes (fill, fit, stretch, tile, center, crop)
 │   ├── CropEditorForm.cs           # Drag-to-crop editor for the custom crop option
@@ -268,6 +282,14 @@ The application stores Image 1, each hover zone's image, fit, crop, position and
 
 The settings file is created when you click **Apply**. Older single-zone files load without changes: their Image 2 and hover area become the first zone and are upgraded on the next save.
 
+Saved presets are kept separately at:
+
+```text
+%LOCALAPPDATA%\HoverWallpaper\presets.json
+```
+
+Each entry stores the full scene and a saved date. If the file is missing or unreadable, the app starts with an empty preset list; it is recreated the first time you save a preset.
+
 ## 🧱 Technology
 
 - **C#**
@@ -314,6 +336,7 @@ Ideas for future versions:
 - [x] Visual hover-zone editor with drag-to-select.
 - [x] Multiple hover zones with independent alternate images.
 - [x] Smooth fade transitions with separate fade-in and fade-out durations.
+- [x] Saved presets that capture every image, zone and fade setting.
 - [ ] Per-monitor image and hover-zone configuration.
 - [ ] Better handling of Explorer restarts and desktop changes.
 - [x] Per-image fit options and a custom crop editor.

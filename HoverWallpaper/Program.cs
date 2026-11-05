@@ -87,6 +87,13 @@ public sealed class HoverZone
     public int Height { get; set; } = 35;
     public FitMode Fit { get; set; } = FitMode.Fill;
     public CropRect Crop { get; set; } = new();
+
+    /// <summary>
+    /// Optional key that must also be held for this zone to trigger, stored as a
+    /// <see cref="System.Windows.Forms.Keys"/> name such as "ControlKey" or "A".
+    /// Empty means hovering alone is enough.
+    /// </summary>
+    public string HoldKey { get; set; } = "";
 }
 
 public sealed class AppSettings
@@ -105,9 +112,17 @@ public sealed class AppSettings
 
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "HoverWallpaper", "settings.json");
+    public static string FilePath =>
+#if DEBUG
+        // Dev-only: point a screenshot run at a temporary settings file so it never
+        // touches the real one.
+        Environment.GetEnvironmentVariable("HW_SETTINGS") is { Length: > 0 } overridePath
+            ? overridePath
+            :
+#endif
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HoverWallpaper", "settings.json");
 
     public static AppSettings Load()
     {
@@ -370,6 +385,7 @@ public sealed class WallpaperWindow : Form
         if (!GetCursorPos(out var p)) return;
 
         // First zone in the list wins when zones overlap, so list order is the priority.
+        // A zone with a hold key only counts while that key is down.
         int zoneHit = -1;
         var s = SystemInformation.VirtualScreen;
         for (int i = 0; i < settings.Zones.Count; i++)
@@ -379,7 +395,10 @@ public sealed class WallpaperWindow : Form
             int ry = s.Top  + s.Height * z.Y      / 100;
             int rw =          s.Width  * z.Width  / 100;
             int rh =          s.Height * z.Height / 100;
-            if (p.X >= rx && p.X < rx + rw && p.Y >= ry && p.Y < ry + rh) { zoneHit = i; break; }
+            if (p.X < rx || p.X >= rx + rw || p.Y < ry || p.Y >= ry + rh) continue;
+            if (!HoldKeys.IsDown(z.HoldKey)) continue;
+            zoneHit = i;
+            break;
         }
 
         if (zoneHit != displayedZone) SwitchTo(zoneHit);

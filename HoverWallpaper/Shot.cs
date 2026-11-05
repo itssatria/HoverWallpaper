@@ -19,6 +19,16 @@ public static class Shot
         window.UpdateLayout();
         Pump();
 
+        // HW_SHOT_SAVE_PRESET=<name> exercises the preset save path (including copying
+        // the images) before capturing, so the result can be checked from a build.
+        var savePresetName = Environment.GetEnvironmentVariable("HW_SHOT_SAVE_PRESET");
+        if (!string.IsNullOrEmpty(savePresetName))
+        {
+            Console.WriteLine(window.DebugSavePreset(savePresetName));
+            window.UpdateLayout();
+            Pump();
+        }
+
         // HW_SHOT_ZONES=1 captures just the hover-zone cards at their own size.
         if (Environment.GetEnvironmentVariable("HW_SHOT_ZONES") == "1")
         {
@@ -32,6 +42,22 @@ public static class Shot
             zbmp.Render(zones);
             Save(zbmp, outPath);
             Console.WriteLine($"zones {(int)zones.ActualWidth}x{(int)zones.ActualHeight} -> {outPath}");
+            return;
+        }
+
+        // HW_SHOT_PRESETS=1 captures just the presets card.
+        if (Environment.GetEnvironmentVariable("HW_SHOT_PRESETS") == "1")
+        {
+            var card = window.PresetsCard;
+            card.UpdateLayout();
+            Pump();
+            var pbmp = new RenderTargetBitmap(
+                Math.Max(1, (int)Math.Ceiling(card.ActualWidth)),
+                Math.Max(1, (int)Math.Ceiling(card.ActualHeight)),
+                96, 96, PixelFormats.Pbgra32);
+            pbmp.Render(card);
+            Save(pbmp, outPath);
+            Console.WriteLine($"presets {(int)card.ActualWidth}x{(int)card.ActualHeight} -> {outPath}");
             return;
         }
 

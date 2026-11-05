@@ -14,6 +14,7 @@ public partial class ZoneCard : System.Windows.Controls.UserControl
     public event EventHandler? CropRequested;
     public event EventHandler? VisualEditorRequested;
     public event EventHandler? RemoveRequested;
+    public event EventHandler? KeyRequested;
     public event EventHandler? ValuesChanged;
 
     public ZoneCard()
@@ -43,6 +44,21 @@ public partial class ZoneCard : System.Windows.Controls.UserControl
         RemoveBtn.Visibility = canRemove ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
         ready = true;
         UpdateCropButton();
+        UpdateKey();
+        UpdateRect();
+    }
+
+    public void UpdateKey()
+    {
+        string key = Zone.HoldKey ?? "";
+        KeyText.Text = HoldKeys.Describe(key);
+        ClearKeyBtn.Visibility = string.IsNullOrWhiteSpace(key)
+            ? System.Windows.Visibility.Collapsed
+            : System.Windows.Visibility.Visible;
+        SetKeyBtn.Content = string.IsNullOrWhiteSpace(key) ? "Set key…" : "Change…";
+        KeyHint.Text = string.IsNullOrWhiteSpace(key)
+            ? "Hovering this zone reveals its image. Set a key to require it as well."
+            : $"Reveals only while {HoldKeys.Describe(key)} is held and the cursor is inside the zone.";
         UpdateRect();
     }
 
@@ -91,6 +107,10 @@ public partial class ZoneCard : System.Windows.Controls.UserControl
         Zone.Width = ZoneWidth;
         Zone.Height = ZoneHeight;
         Zone.Fit = Fit;
+        // The key is not a text field; it is written by SetKey/ClearKey already, but
+        // this keeps a hand-broken value from reaching the wallpaper.
+        if (!HoldKeys.TryParse(Zone.HoldKey, out var key)) Zone.HoldKey = "";
+        else Zone.HoldKey = key.ToString();
     }
 
     static int Val(Wpf.Ui.Controls.NumberBox box, int min, int max, int fallback) =>
@@ -100,6 +120,14 @@ public partial class ZoneCard : System.Windows.Controls.UserControl
     void Crop_Click(object sender, System.Windows.RoutedEventArgs e) => CropRequested?.Invoke(this, EventArgs.Empty);
     void VisualEditor_Click(object sender, System.Windows.RoutedEventArgs e) => VisualEditorRequested?.Invoke(this, EventArgs.Empty);
     void Remove_Click(object sender, System.Windows.RoutedEventArgs e) => RemoveRequested?.Invoke(this, EventArgs.Empty);
+    void SetKey_Click(object sender, System.Windows.RoutedEventArgs e) => KeyRequested?.Invoke(this, EventArgs.Empty);
+
+    void ClearKey_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        Zone.HoldKey = "";
+        UpdateKey();
+        ValuesChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     void Fit_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
@@ -145,12 +173,30 @@ public partial class ZoneCard : System.Windows.Controls.UserControl
         if (PreviewImage.Source == null || cw <= 0 || ch <= 0)
         {
             PreviewRect.Visibility = System.Windows.Visibility.Collapsed;
+            PreviewKeyBadge.Visibility = System.Windows.Visibility.Collapsed;
             return;
         }
         PreviewRect.Visibility = System.Windows.Visibility.Visible;
-        System.Windows.Controls.Canvas.SetLeft(PreviewRect, Math.Round(cw * X / 100.0));
-        System.Windows.Controls.Canvas.SetTop(PreviewRect, Math.Round(ch * Y / 100.0));
-        PreviewRect.Width = Math.Max(1, Math.Round(cw * ZoneWidth / 100.0));
-        PreviewRect.Height = Math.Max(1, Math.Round(ch * ZoneHeight / 100.0));
+        double left = Math.Round(cw * X / 100.0);
+        double top = Math.Round(ch * Y / 100.0);
+        double w = Math.Max(1, Math.Round(cw * ZoneWidth / 100.0));
+        double h = Math.Max(1, Math.Round(ch * ZoneHeight / 100.0));
+        System.Windows.Controls.Canvas.SetLeft(PreviewRect, left);
+        System.Windows.Controls.Canvas.SetTop(PreviewRect, top);
+        PreviewRect.Width = w;
+        PreviewRect.Height = h;
+
+        // A key-gated zone gets its key printed inside the rectangle so the preview
+        // shows why it behaves differently.
+        bool hasKey = !string.IsNullOrWhiteSpace(Zone.HoldKey);
+        PreviewKeyBadge.Visibility = hasKey
+            ? System.Windows.Visibility.Visible
+            : System.Windows.Visibility.Collapsed;
+        if (hasKey)
+        {
+            PreviewKeyText.Text = HoldKeys.Describe(Zone.HoldKey);
+            System.Windows.Controls.Canvas.SetLeft(PreviewKeyBadge, left + 3);
+            System.Windows.Controls.Canvas.SetTop(PreviewKeyBadge, top + 3);
+        }
     }
 }

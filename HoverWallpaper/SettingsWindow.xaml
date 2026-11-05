@@ -120,6 +120,57 @@
 
                 <StackPanel x:Name="ZonesPanel" />
 
+                <TextBlock Text="Presets" FontSize="20" FontWeight="SemiBold" Margin="0,26,0,12" />
+                <ui:Card x:Name="PresetsCard" Padding="16" HorizontalAlignment="Stretch">
+                    <StackPanel>
+                        <TextBlock TextWrapping="Wrap" FontSize="13" LineHeight="20"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                            Save the current scene — Image 1 and every hover zone with its image, fit, crop and screen
+                            area — then load it again later.
+                        </TextBlock>
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="12" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBox x:Name="PresetName" Grid.Column="0" VerticalAlignment="Center"
+                                        PlaceholderText="Preset name" MaxLength="60" KeyDown="PresetName_KeyDown" />
+                            <ui:Button x:Name="SavePresetBtn" Grid.Column="2" Content="Save preset"
+                                       Icon="{ui:SymbolIcon Save24}" Appearance="Primary" Click="SavePreset_Click" />
+                        </Grid>
+                        <TextBlock x:Name="PresetEmptyText" Text="No saved presets yet." Margin="0,14,0,0" FontSize="12"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                        <ItemsControl x:Name="PresetList" Margin="0,2,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,12,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="10" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="4" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Summary}" FontSize="12" Margin="0,2,0,0"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </StackPanel>
+                                        <ui:Button Grid.Column="2" Content="Load" Icon="{ui:SymbolIcon Play24}"
+                                                   Tag="{Binding}" Click="LoadPreset_Click"
+                                                   ToolTip="Load this preset into the editor" />
+                                        <ui:Button Grid.Column="4" Icon="{ui:SymbolIcon Delete24}"
+                                                   Tag="{Binding}" Click="DeletePreset_Click"
+                                                   ToolTip="Delete this preset" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </ui:Card>
+
                 <TextBlock Text="Preferences" FontSize="20" FontWeight="SemiBold" Margin="0,26,0,12" />
                 <ui:Card Padding="16" HorizontalAlignment="Stretch">
                     <StackPanel>

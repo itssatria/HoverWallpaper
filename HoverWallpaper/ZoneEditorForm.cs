@@ -9,6 +9,7 @@ public sealed class ZoneEditorForm : Form
     private readonly string? error1;
     private readonly string? error2;
     private readonly double desktopAspectRatio;
+    private readonly string? holdKey;
 
     private int zoneX;
     private int zoneY;
@@ -31,13 +32,14 @@ public sealed class ZoneEditorForm : Form
     public int ResultWidth => zoneWidth;
     public int ResultHeight => zoneHeight;
 
-    public ZoneEditorForm(string? image1Path, string? image2Path, FitMode fit1, CropRect crop1, FitMode fit2, CropRect crop2, int initialX, int initialY, int initialW, int initialH)
+    public ZoneEditorForm(string? image1Path, string? image2Path, FitMode fit1, CropRect crop1, FitMode fit2, CropRect crop2, int initialX, int initialY, int initialW, int initialH, string? holdKey = null)
     {
         Text = "Visual Hover-Zone Editor - Drag to Select Area";
         Width = 960;
         Height = 670;
         StartPosition = FormStartPosition.CenterParent;
         DoubleBuffered = true;
+        this.holdKey = holdKey;
 
         zoneX = Math.Clamp(initialX, 0, 100);
         zoneY = Math.Clamp(initialY, 0, 100);
@@ -122,6 +124,8 @@ public sealed class ZoneEditorForm : Form
             previewHoverActive = chkTestHover.Checked;
             canvas.Invalidate();
         };
+        if (!string.IsNullOrWhiteSpace(holdKey))
+            chkTestHover.Text = $"Test hover effect live (hold {HoldKeys.Describe(holdKey)})";
 
         topBar.Controls.AddRange(new Control[] { infoLabel, viewLabel, rdoViewImage1, rdoViewImage2 });
         if (image2 != null)
@@ -224,8 +228,10 @@ public sealed class ZoneEditorForm : Form
 
         if (previewHoverActive)
         {
-            currentImage = (cursorInsideZone && image2 != null) ? image2 : image1;
-            activeError = (cursorInsideZone && image2 != null) ? error2 : error1;
+            // Match the real behavior: a key-gated zone only shows while its key is held.
+            bool hot = cursorInsideZone && HoldKeys.IsDown(holdKey);
+            currentImage = (hot && image2 != null) ? image2 : image1;
+            activeError = (hot && image2 != null) ? error2 : error1;
         }
         else if (rdoViewImage2.Checked)
         {

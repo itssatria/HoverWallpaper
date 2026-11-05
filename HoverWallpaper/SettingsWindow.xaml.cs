@@ -10,11 +10,12 @@ namespace HoverWallpaper;
 public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
 {
     const int ThumbMaxWidth = 480;
-    const int MaxZones = 12;
+    const int MaxZones = Preset.MaxZones;
 
     readonly AppSettings settings = AppSettings.Load();
     readonly TrayApp app;
     readonly List<ZoneCard> cards = [];
+    readonly List<Preset> presets = PresetStore.Load();
     readonly bool ready;
 
     string path1 = "";
@@ -45,6 +46,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         UpdateFadeOptions();
         LoadImage1();
         RebuildZones();
+        RefreshPresetList();
 
         Closing += OnWindowClosing;
         Closed += (_, _) => IsClosed = true;
@@ -219,6 +221,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
             card.BrowseRequested += (_, _) => PickZoneImage(card);
             card.CropRequested += (_, _) => EditZoneCrop(card);
             card.VisualEditorRequested += (_, _) => EditZoneVisually(card);
+            card.KeyRequested += (_, _) => EditZoneKey(card);
             card.RemoveRequested += (_, _) => RemoveZone(card);
             card.ValuesChanged += (_, _) => card.CopyValuesToModel();
             if (i > 0) card.Margin = new System.Windows.Thickness(0, 12, 0, 0);
@@ -289,6 +292,18 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         card.Zone.Crop.H = r.H;
     }
 
+    // Reads one key for the zone's hold requirement; an empty result clears it.
+    void EditZoneKey(ZoneCard card)
+    {
+        using var capture = new KeyCaptureForm($"Hover zone {cards.IndexOf(card) + 1}");
+        if (capture.ShowDialog(Owner32()) != System.Windows.Forms.DialogResult.OK) return;
+        if (!HoldKeys.IsAssignable(capture.Result)) return;
+
+        card.Zone.HoldKey = capture.Result.ToString();
+        card.UpdateKey();
+        UpdateZonePreviews();
+    }
+
     void EditZoneVisually(ZoneCard card)
     {
         card.CopyValuesToModel();
@@ -300,7 +315,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         using var editor = new ZoneEditorForm(path1, card.Zone.Image,
             (FitMode)Math.Max(0, Fit1.SelectedIndex), settings.Crop1,
             card.Zone.Fit, card.Zone.Crop,
-            card.X, card.Y, card.ZoneWidth, card.ZoneHeight);
+            card.X, card.Y, card.ZoneWidth, card.ZoneHeight, card.Zone.HoldKey);
         if (editor.ShowDialog(Owner32()) != System.Windows.Forms.DialogResult.OK) return;
 
         card.Zone.X = editor.ResultX;
@@ -327,6 +342,178 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         }
         foreach (var card in cards) card.SetPreview(preview1, error1);
     }
+
+    // ── Presets ───────────────────────────────────────────
+    // Copies whatever is currently in the editor into the in-memory settings, so a
+    // preset captures unsaved edits too. Nothing is written to settings.json here.
+    void SyncEditorToSettings()
+    {
+        foreach (var card in cards) card.CopyValuesToModel();
+        settings.Image1 = path1.Trim('"', ' ');
+        settings.Fit1 = (FitMode)Math.Max(0, Fit1.SelectedIndex);
+        settings.FadeEnabled = FadeToggle.IsChecked == true;
+        settings.FadeInMs = FadeInMs;
+        settings.FadeOutMs = FadeOutMs;
+    }
+
+    void PresetName_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Enter) return;
+        e.Handled = true;
+        SavePreset();
+    }
+
+    void SavePreset_Click(object sender, System.Windows.RoutedEventArgs e) => SavePreset();
+
+    void SavePreset()
+    {
+        string name = PresetName.Text.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            Warn("Type a name for the preset first, for example \"Night city\".", "Preset name required");
+            PresetName.Focus();
+            return;
+        }
+
+        SyncEditorToSettings();
+
+        // A preset that points at files which are already gone would only fail later.
+        var missing = new List<string>();
+        if (!File.Exists(settings.Image1)) missing.Add("Image 1");
+        for (int i = 0; i < settings.Zones.Count; i++)
+            if (!File.Exists((settings.Zones[i].Image ?? "").Trim('"', ' ')))
+                missing.Add($"hover zone {i + 1}");
+        if (missing.Count > 0 &&
+            System.Windows.MessageBox.Show(this,
+                $"These parts have no readable image yet:\n  • {string.Join("\n  • ", missing)}\n\n" +
+                "Save the preset anyway? You can load it now, but it will not apply until the images exist.",
+                "Missing images", System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning) != System.Windows.MessageBoxResult.Yes)
+            return;
+
+        var existing = presets.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (existing != null &&
+            System.Windows.MessageBox.Show(this,
+                $"A preset named \"{existing.Name}\" already exists.\nReplace it with the current scene?",
+                "Replace preset", System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question) != System.Windows.MessageBoxResult.Yes)
+            return;
+
+        var snapshot = Preset.Capture(name, settings);
+
+        // The preset keeps its own copies of every image, so loading it still works
+        // after the originals are moved or deleted.
+        if (!PresetStore.CaptureImages(snapshot, out var copyError))
+        {
+            Error($"Could not copy the images for this preset:\n{copyError}", "Preset not saved");
+            return;
+        }
+
+        if (existing != null)
+        {
+            int index = presets.IndexOf(existing);
+            presets[index] = snapshot;
+        }
+        else
+        {
+            presets.Add(snapshot);
+        }
+
+        if (!PresetStore.Save(presets, out var err))
+        {
+            // Keep the list consistent with what is actually on disk.
+            if (existing != null) presets[presets.IndexOf(snapshot)] = existing;
+            else presets.Remove(snapshot);
+            Error($"Could not save the preset:\n{err}", "Preset not saved");
+            return;
+        }
+
+        PresetName.Clear();
+        RefreshPresetList();
+        SetStatus($"Preset \"{name}\" saved with its own copy of the images.", error: false);
+    }
+
+    void LoadPreset_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement { Tag: Preset preset }) return;
+        if (System.Windows.MessageBox.Show(this,
+                $"Load \"{preset.Name}\"?\n\nThis replaces Image 1 and every hover zone in the editor, " +
+                "including any unsaved changes. Press Apply afterwards to use it on the desktop.",
+                "Load preset", System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question) != System.Windows.MessageBoxResult.Yes)
+            return;
+
+        preset.ApplyTo(settings);
+        LoadFromSettings();
+        // Prefilled so a quick re-save updates this preset instead of asking for a new name.
+        PresetName.Text = preset.Name;
+        SetStatus($"Preset \"{preset.Name}\" loaded. Press Apply to use it.", error: false);
+    }
+
+    void DeletePreset_Click(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.FrameworkElement { Tag: Preset preset }) return;
+        if (System.Windows.MessageBox.Show(this,
+                $"Delete the preset \"{preset.Name}\"?\n\nThis cannot be undone.",
+                "Delete preset", System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Warning) != System.Windows.MessageBoxResult.Yes)
+            return;
+
+        presets.Remove(preset);
+        if (!PresetStore.Save(presets, out var err))
+        {
+            presets.Add(preset);
+            Error($"Could not delete the preset:\n{err}", "Preset not deleted");
+            return;
+        }
+        // Only remove the copied images once the list on disk no longer refers to them.
+        PresetStore.DeleteImages(preset.Name, presets);
+        RefreshPresetList();
+        SetStatus($"Preset \"{preset.Name}\" deleted.", error: false);
+    }
+
+    // Refreshes the whole form from the settings model after a preset is loaded.
+    void LoadFromSettings()
+    {
+        path1 = settings.Image1 ?? "";
+        Fit1.SelectedIndex = Math.Clamp((int)settings.Fit1, 0, FitModes.Labels.Length - 1);
+        FadeToggle.IsChecked = settings.FadeEnabled;
+        FadeInSlider.Value = Math.Clamp(settings.FadeInMs, 0, 2000);
+        FadeOutSlider.Value = Math.Clamp(settings.FadeOutMs, 0, 2000);
+        UpdateCropButton1();
+        UpdateFadeOptions();
+        // Rebuild the cards against the loaded zones first; LoadImage1 then refreshes
+        // Image 1 and every card preview from the new path, fit and crop.
+        RebuildZones();
+        LoadImage1();
+    }
+
+    void RefreshPresetList()
+    {
+        var ordered = presets.OrderByDescending(p => p.SavedAt).ToList();
+        PresetList.ItemsSource = ordered;
+        PresetEmptyText.Visibility = ordered.Count == 0
+            ? System.Windows.Visibility.Visible
+            : System.Windows.Visibility.Collapsed;
+    }
+
+#if DEBUG
+    // Screenshot-only: runs the preset save path (including copying images) without
+    // the confirmation dialogs so the result can be inspected from a build.
+    public string DebugSavePreset(string name)
+    {
+        SyncEditorToSettings();
+        var snapshot = Preset.Capture(name, settings);
+        if (!PresetStore.CaptureImages(snapshot, out var copyError))
+            return $"copy failed: {copyError}";
+        presets.RemoveAll(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        presets.Add(snapshot);
+        if (!PresetStore.Save(presets, out var saveError)) return $"save failed: {saveError}";
+        RefreshPresetList();
+        return $"saved {snapshot.Zones.Count} zones, image1={System.IO.Path.GetFileName(snapshot.Image1)}, " +
+               $"zone1={System.IO.Path.GetFileName(snapshot.Zones[0].Image)}";
+    }
+#endif
 
     int FadeInMs => (int)Math.Round(FadeInSlider.Value);
     int FadeOutMs => (int)Math.Round(FadeOutSlider.Value);
