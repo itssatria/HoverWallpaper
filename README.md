@@ -29,6 +29,7 @@ Set a normal wallpaper, define a hover zone, and reveal a second image whenever 
 | **Custom crop editor** | Drag a crop rectangle over the image. It is locked to your screen's shape, so the result never looks distorted. |
 | **Mouse-triggered reveal** | Image 2 appears when the cursor enters the configured rectangular area. |
 | **Automatic restore** | Leaving the hover area switches back to Image 1. |
+| **Fade animation** | Optionally cross-fade into and out of Image 2, with independently adjustable fade-in and fade-out durations. |
 | **Configurable hover zone** | Set the area's X position, Y position, width, and height as percentages of the virtual desktop or draw it visually. |
 | **Close to tray** | Closing the settings window keeps the wallpaper running in the system tray. Use the tray menu to open settings or exit. |
 | **Single instance** | Launching the app again opens the settings of the running copy instead of starting a second one. |
@@ -47,6 +48,10 @@ Set a normal wallpaper, define a hover zone, and reveal a second image whenever 
 5. **Apply** — the app displays Image 1 and monitors the mouse position.
 6. **Hover** — when the cursor enters the zone, the app displays Image 2. When it leaves, Image 1 returns.
 7. **Close the window** — the wallpaper keeps running from the system tray.
+
+### Fade animation
+
+**Preferences → Fade animation between images** cross-fades between the two images instead of switching instantly. **Fade in** is how long Image 2 takes to appear when the cursor enters the hover area; **Fade out** is how long Image 1 takes to return when it leaves. Each slider goes from 0 to 2000 ms; 0 means instant.
 
 ### Fit options
 
@@ -251,7 +256,7 @@ The settings window also includes a **Launch when I sign in to Windows** checkbo
 
 ## 🗂️ Settings and data
 
-The application stores its image paths, fit options, crop areas and hover-zone settings at:
+The application stores its image paths, fit options, crop areas, hover-zone and fade settings at:
 
 ```text
 %LOCALAPPDATA%\HoverWallpaper\settings.json
@@ -274,7 +279,6 @@ The settings file is created when you click **Apply wallpaper**.
 Hover Wallpaper is an early prototype. Please keep these limitations in mind:
 
 - **One hover zone:** only one rectangular trigger area is supported.
-- **Instant image switching:** cross-fade transitions are not implemented yet.
 - **One canvas for all monitors:** fit options and crops are applied to the whole virtual desktop, not to each monitor on its own.
 - **Needs a wallpaper layer:** the app draws above the Windows background. If Windows keeps resetting Personalization to a solid color, the desktop behind the app can stay black when the app is not running.
 - **Windows desktop integration:** the app attaches its wallpaper window to Explorer's `WorkerW` desktop host. Explorer updates, Windows configurations, and multi-monitor setups can behave differently. The app attempts to reattach if the host disappears, but this needs broader testing.
@@ -305,7 +309,7 @@ Ideas for future versions:
 
 - [x] Visual hover-zone editor with drag-to-select.
 - [ ] Multiple hover zones with independent alternate images.
-- [ ] Smooth fade transitions.
+- [x] Smooth fade transitions with separate fade-in and fade-out durations.
 - [ ] Per-monitor image and hover-zone configuration.
 - [ ] Better handling of Explorer restarts and desktop changes.
 - [x] Per-image fit options and a custom crop editor.

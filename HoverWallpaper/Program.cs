@@ -1,3 +1,4 @@
+using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -86,6 +87,9 @@ public sealed class AppSettings
     public int Width { get; set; } = 25;
     public int Height { get; set; } = 35;
     public bool StartWithWindows { get; set; }
+    public bool FadeEnabled { get; set; } = true;
+    public int FadeInMs { get; set; } = 250;
+    public int FadeOutMs { get; set; } = 250;
     public FitMode Fit1 { get; set; } = FitMode.Fill;
     public FitMode Fit2 { get; set; } = FitMode.Fill;
     public CropRect Crop1 { get; set; } = new();
@@ -142,6 +146,12 @@ public sealed class WallpaperWindow : Form
     Image? normal, hover;
     bool showingHover;
     IntPtr worker;
+
+    // Cross-fade state. fade is 0 when Image 1 is fully visible and 1 when Image 2 is.
+    Bitmap? blend;            // reused compositing surface, only allocated while fading
+    float fade, fadeFrom, fadeGoal;
+    int fadeDurationMs;
+    readonly System.Diagnostics.Stopwatch fadeClock = new();
 
     public WallpaperWindow(AppSettings s)
     {
@@ -276,7 +286,7 @@ public sealed class WallpaperWindow : Form
         var vs = SystemInformation.VirtualScreen;
         SetWindowPos(Handle, insertAfter, 0, 0, vs.Width, vs.Height, posFlags);
         picture.Bounds = new Rectangle(0, 0, vs.Width, vs.Height);
-        picture.Image = showingHover ? hover : normal;
+        ApplyFadeFrame();
         PerformLayout();
         SetLayeredWindowAttributes(Handle, 0, 255, 0x2); // LWA_ALPHA
         Invalidate(true);
@@ -299,13 +309,83 @@ public sealed class WallpaperWindow : Form
         if (inside != showingHover)
         {
             showingHover = inside;
-            picture.Image = inside ? hover : normal;
+            BeginFade(inside ? 1f : 0f);
         }
+        AdvanceFade();
+    }
+
+    // Starts a transition toward targetFade. A fade started while another is running
+    // picks up from the current image so a quick in-and-out does not jump.
+    void BeginFade(float targetFade)
+    {
+        int duration = showingHover ? settings.FadeInMs : settings.FadeOutMs;
+        if (!settings.FadeEnabled || duration <= 0 || fade == targetFade)
+        {
+            fade = fadeGoal = fadeFrom = targetFade;
+            fadeDurationMs = 0;
+            ApplyFadeFrame();
+            return;
+        }
+        fadeFrom = fade;
+        fadeGoal = targetFade;
+        fadeDurationMs = Math.Max(1, duration);
+        fadeClock.Restart();
+    }
+
+    // The tick advances the fade by its real elapsed time, so the configured duration
+    // holds even if a tick is late.
+    void AdvanceFade()
+    {
+        if (fade == fadeGoal) return;
+        float t = Math.Min(1f, (float)(fadeClock.ElapsedMilliseconds / (double)fadeDurationMs));
+        // Smoothstep: gentle start and end, no visible snap.
+        float eased = t * t * (3f - 2f * t);
+        fade = fadeFrom + (fadeGoal - fadeFrom) * eased;
+        if (t >= 1f)
+        {
+            fade = fadeGoal;
+            fadeDurationMs = 0;
+        }
+        ApplyFadeFrame();
+    }
+
+    void ApplyFadeFrame()
+    {
+        if (fade <= 0f) picture.Image = normal;
+        else if (fade >= 1f) picture.Image = hover;
+        else
+        {
+            DrawBlend(fade);
+            // The blend bitmap is reused every frame, so assign Image only when it
+            // changes and force the repaint ourselves.
+            if (!ReferenceEquals(picture.Image, blend)) picture.Image = blend;
+            picture.Invalidate();
+        }
+    }
+
+    void DrawBlend(float opacity)
+    {
+        if (normal == null || hover == null) return;
+        // Allocated on first use and kept for quick fades back and forth.
+        if (blend == null || blend.Width != normal.Width || blend.Height != normal.Height)
+        {
+            blend?.Dispose();
+            blend = new Bitmap(normal.Width, normal.Height, PixelFormat.Format32bppPArgb);
+        }
+        using var g = Graphics.FromImage(blend);
+        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+        g.DrawImage(normal, 0, 0, blend.Width, blend.Height);
+        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
+        var colorMatrix = new System.Drawing.Imaging.ColorMatrix { Matrix33 = opacity };
+        using var attributes = new System.Drawing.Imaging.ImageAttributes();
+        attributes.SetColorMatrix(colorMatrix);
+        var dest = new Rectangle(0, 0, blend.Width, blend.Height);
+        g.DrawImage(hover, dest, 0, 0, hover.Width, hover.Height, GraphicsUnit.Pixel, attributes);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        timer.Stop(); normal?.Dispose(); hover?.Dispose();
+        timer.Stop(); normal?.Dispose(); hover?.Dispose(); blend?.Dispose();
         base.OnFormClosed(e);
     }
 

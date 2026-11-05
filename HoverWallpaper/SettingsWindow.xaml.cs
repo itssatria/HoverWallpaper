@@ -42,6 +42,9 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         NumW.Value = settings.Width;
         NumH.Value = settings.Height;
         StartupToggle.IsChecked = settings.StartWithWindows;
+        FadeToggle.IsChecked = settings.FadeEnabled;
+        FadeInSlider.Value = Math.Clamp(settings.FadeInMs, 0, 2000);
+        FadeOutSlider.Value = Math.Clamp(settings.FadeOutMs, 0, 2000);
         Fit1.SelectedIndex = (int)settings.Fit1;
         Fit2.SelectedIndex = (int)settings.Fit2;
 
@@ -50,6 +53,7 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
 
         ready = true;
         UpdateCropButtons();
+        UpdateFadeOptions();
         LoadImage(1);
         LoadImage(2);
         UpdateZoneRect();
@@ -203,6 +207,34 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
     static int Val(Wpf.Ui.Controls.NumberBox box, int min, int max, int fallback) =>
         box.Value is double d && !double.IsNaN(d) ? Math.Clamp((int)Math.Round(d), min, max) : fallback;
 
+    int FadeInMs => (int)Math.Round(FadeInSlider.Value);
+    int FadeOutMs => (int)Math.Round(FadeOutSlider.Value);
+
+    void FadeToggle_Changed(object sender, System.Windows.RoutedEventArgs e) => UpdateFadeOptions();
+
+    void Fade_Changed(object sender, System.Windows.RoutedPropertyChangedEventArgs<double> e) => UpdateFadeLabels();
+
+    // The duration sliders only matter while fading is switched on.
+    void UpdateFadeOptions()
+    {
+        if (!ready) return;
+        bool on = FadeToggle.IsChecked == true;
+        FadeOptions.IsEnabled = on;
+        FadeOptions.Opacity = on ? 1.0 : 0.4;
+        UpdateFadeLabels();
+    }
+
+    void UpdateFadeLabels()
+    {
+        // ValueChanged can fire while the XAML is still being built, before both
+        // sliders and labels exist.
+        if (FadeInSlider == null || FadeOutSlider == null || FadeInValue == null || FadeOutValue == null) return;
+        FadeInValue.Text = FormatDuration(FadeInMs);
+        FadeOutValue.Text = FormatDuration(FadeOutMs);
+    }
+
+    static string FormatDuration(int ms) => ms <= 0 ? "Instant" : $"{ms} ms";
+
     int ZX => Val(NumX, 0, 100, 60);
     int ZY => Val(NumY, 0, 100, 30);
     int ZW => Val(NumW, 1, 100, 25);
@@ -291,6 +323,9 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
         settings.Width = ZW;
         settings.Height = ZH;
         settings.StartWithWindows = startup;
+        settings.FadeEnabled = FadeToggle.IsChecked == true;
+        settings.FadeInMs = FadeInMs;
+        settings.FadeOutMs = FadeOutMs;
         settings.Fit1 = (FitMode)Math.Max(0, Fit1.SelectedIndex);
         settings.Fit2 = (FitMode)Math.Max(0, Fit2.SelectedIndex);
         settings.Save();

@@ -2,6 +2,11 @@
 
 All notable changes to Hover Wallpaper are listed here. The newest release is first.
 
+## Unreleased
+
+### Added
+- **Fade animation toggle and duration sliders.** Preferences now has a **Fade animation between images** switch and separate **Fade in** / **Fade out** sliders (0–2000 ms, 0 = instant), saved to `settings.json`. The wallpaper cross-fades with a smooth ease instead of switching instantly, and a fade reversed mid-way starts from the current blend instead of jumping.
+
 ## v1.0 - 2026-11-05
 
 ### Added

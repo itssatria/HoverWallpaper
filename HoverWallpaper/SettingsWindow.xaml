@@ -204,8 +204,48 @@
 
                 <TextBlock Text="Preferences" FontSize="20" FontWeight="SemiBold" Margin="0,26,0,12" />
                 <ui:Card Padding="16" HorizontalAlignment="Stretch">
-                    <ui:ToggleSwitch x:Name="StartupToggle" Content="Launch when I sign in to Windows"
-                                     ToolTip="Start Hover Wallpaper automatically after you sign in." />
+                    <StackPanel>
+                        <ui:ToggleSwitch x:Name="StartupToggle" Content="Launch when I sign in to Windows"
+                                         ToolTip="Start Hover Wallpaper automatically after you sign in." />
+
+                        <Border Height="1" Margin="0,14" Background="{DynamicResource ControlStrokeColorDefaultBrush}" />
+
+                        <ui:ToggleSwitch x:Name="FadeToggle" Content="Fade animation between images"
+                                         ToolTip="Cross-fade instead of switching instantly when the cursor enters or leaves the hover area."
+                                         Checked="FadeToggle_Changed" Unchecked="FadeToggle_Changed" />
+
+                        <Grid x:Name="FadeOptions" Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="20" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <Grid>
+                                    <TextBlock Text="Fade in" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="FadeInValue" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" Text="250 ms" />
+                                </Grid>
+                                <Slider x:Name="FadeInSlider" Template="{StaticResource UiHorizontalSlider}" Margin="0,6,0,0"
+                                        Minimum="0" Maximum="2000" Value="250" TickFrequency="50" IsSnapToTickEnabled="True"
+                                        SmallChange="50" LargeChange="250" ValueChanged="Fade_Changed"
+                                        ToolTip="How long Image 2 takes to appear when the cursor enters the hover area." />
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <Grid>
+                                    <TextBlock Text="Fade out" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="FadeOutValue" HorizontalAlignment="Right" FontSize="12" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource AccentTextFillColorPrimaryBrush}" Text="250 ms" />
+                                </Grid>
+                                <Slider x:Name="FadeOutSlider" Template="{StaticResource UiHorizontalSlider}" Margin="0,6,0,0"
+                                        Minimum="0" Maximum="2000" Value="250" TickFrequency="50" IsSnapToTickEnabled="True"
+                                        SmallChange="50" LargeChange="250" ValueChanged="Fade_Changed"
+                                        ToolTip="How long Image 1 takes to come back when the cursor leaves the hover area." />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
                 </ui:Card>
             </StackPanel>
         </ScrollViewer>
