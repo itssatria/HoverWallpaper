@@ -19,17 +19,38 @@ public static class Shot
         window.UpdateLayout();
         Pump();
 
+        // HW_SHOT_ZONES=1 captures just the hover-zone cards at their own size.
+        if (Environment.GetEnvironmentVariable("HW_SHOT_ZONES") == "1")
+        {
+            var zones = window.ZonesPanel;
+            zones.UpdateLayout();
+            Pump();
+            var zbmp = new RenderTargetBitmap(
+                Math.Max(1, (int)Math.Ceiling(zones.ActualWidth)),
+                Math.Max(1, (int)Math.Ceiling(zones.ActualHeight)),
+                96, 96, PixelFormats.Pbgra32);
+            zbmp.Render(zones);
+            Save(zbmp, outPath);
+            Console.WriteLine($"zones {(int)zones.ActualWidth}x{(int)zones.ActualHeight} -> {outPath}");
+            return;
+        }
+
         int w = (int)Math.Ceiling(window.ActualWidth);
         int h = (int)Math.Ceiling(window.ActualHeight);
         if (w <= 0 || h <= 0) { Console.Error.WriteLine($"bad window size {w}x{h}"); return; }
 
         var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
         rtb.Render(window);
-
-        var encoder = new PngBitmapEncoder();
-        encoder.Frames.Add(BitmapFrame.Create(rtb));
-        using (var fs = File.Create(outPath)) encoder.Save(fs);
+        Save(rtb, outPath);
         Console.WriteLine($"window {w}x{h} -> {outPath}");
+    }
+
+    static void Save(BitmapSource source, string outPath)
+    {
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(source));
+        using var fs = File.Create(outPath);
+        encoder.Save(fs);
     }
 
     // The WPF dispatcher runs on the WinForms message loop, so pump it between steps.

@@ -6,7 +6,7 @@
 
 ### A desktop wallpaper that reacts to your mouse.
 
-Set a normal wallpaper, define a hover zone, and reveal a second image whenever your cursor enters that area.
+Set a normal wallpaper, add hover zones with their own images, and reveal the matching image whenever your cursor enters a zone.
 
 [![Windows 11](https://img.shields.io/badge/Platform-Windows%2011-0078D4?logo=windows11&logoColor=white)](#requirements)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)](#requirements)
@@ -23,14 +23,14 @@ Set a normal wallpaper, define a hover zone, and reveal a second image whenever 
 
 | Feature | Description |
 |---|---|
-| **Two-image wallpaper** | Choose **Image 1** for the normal desktop and **Image 2** for the hover effect. |
-| **Visual zone editor** | Interactive canvas with drag-to-select, presets, and live hover testing. |
+| **Multiple hover images** | Choose **Image 1** for the normal desktop, then add hover zones with independent images. |
+| **Visual zone editor** | Each zone has an interactive canvas with drag-to-select, presets, and live hover testing. |
 | **Per-image fit options** | Choose how each image fills the desktop: Fill, Fit, Stretch, Tile, Center, or a custom crop. |
 | **Custom crop editor** | Drag a crop rectangle over the image. It is locked to your screen's shape, so the result never looks distorted. |
-| **Mouse-triggered reveal** | Image 2 appears when the cursor enters the configured rectangular area. |
-| **Automatic restore** | Leaving the hover area switches back to Image 1. |
-| **Fade animation** | Optionally cross-fade into and out of Image 2, with independently adjustable fade-in and fade-out durations. |
-| **Configurable hover zone** | Set the area's X position, Y position, width, and height as percentages of the virtual desktop or draw it visually. |
+| **Mouse-triggered reveal** | The image assigned to a zone appears when the cursor enters its rectangular area. |
+| **Automatic restore** | Leaving all hover zones switches back to Image 1. |
+| **Fade animation** | Optionally cross-fade into and out of hover images, with independently adjustable fade-in and fade-out durations. |
+| **Configurable hover zones** | Add or remove zones and set each area's X position, Y position, width, and height as percentages of the virtual desktop. |
 | **Close to tray** | Closing the settings window keeps the wallpaper running in the system tray. Use the tray menu to open settings or exit. |
 | **Single instance** | Launching the app again opens the settings of the running copy instead of starting a second one. |
 | **Common image formats** | Supports JPG, JPEG, PNG, BMP, and WebP file selection. Actual decoding depends on Windows image codec support. |
@@ -42,16 +42,17 @@ Set a normal wallpaper, define a hover zone, and reveal a second image whenever 
 ## 🖼️ How it works
 
 1. **Choose Image 1** — the regular wallpaper shown by default.
-2. **Choose Image 2** — the alternate image revealed by the hover interaction.
-3. **Pick a fit for each image** — Fill, Fit, Stretch, Tile, Center, or Custom crop.
-4. **Define the hover zone** — position and size are set using percentages of the full virtual desktop.
-5. **Apply** — the app displays Image 1 and monitors the mouse position.
-6. **Hover** — when the cursor enters the zone, the app displays Image 2. When it leaves, Image 1 returns.
-7. **Close the window** — the wallpaper keeps running from the system tray.
+2. **Configure the default hover zone** — it is already added; choose its alternate image.
+3. **Add more zones if needed** — each zone gets its own image and screen area.
+4. **Pick a fit for each image** — Fill, Fit, Stretch, Tile, Center, or Custom crop.
+5. **Define each hover area** — position and size are percentages of the full virtual desktop.
+6. **Apply** — the app displays Image 1 and monitors the mouse position.
+7. **Hover** — entering a zone shows its assigned image; leaving all zones restores Image 1. If zones overlap, the first zone in the list takes priority.
+8. **Close the window** — the wallpaper keeps running from the system tray.
 
 ### Fade animation
 
-**Preferences → Fade animation between images** cross-fades between the two images instead of switching instantly. **Fade in** is how long Image 2 takes to appear when the cursor enters the hover area; **Fade out** is how long Image 1 takes to return when it leaves. Each slider goes from 0 to 2000 ms; 0 means instant.
+**Preferences → Fade animation between images** cross-fades between the two images instead of switching instantly. **Fade in** is how long a hover image takes to appear when the cursor enters its zone; **Fade out** is how long Image 1 takes to return when the cursor leaves all zones. Moving directly between zones cross-fades to the newly active zone. Each slider goes from 0 to 2000 ms; 0 means instant.
 
 ### Fit options
 
@@ -68,14 +69,14 @@ Each image has its own fit, so Image 1 can be cropped while Image 2 is stretched
 
 ### Hover zone coordinates
 
-The hover zone is a rectangle measured against the virtual desktop:
+Each hover zone is a rectangle measured against the virtual desktop:
 
 - `X` — distance from the left edge, in percent.
 - `Y` — distance from the top edge, in percent.
 - `Width` — rectangle width, in percent.
 - `Height` — rectangle height, in percent.
 
-For example, `X = 60`, `Y = 30`, `Width = 25`, and `Height = 35` places a rectangular trigger area toward the right side of the desktop.
+The app starts with one zone. Add more zones from Settings; each one has its own image and fit/crop settings. If zones overlap, the first zone in the list wins. For example, `X = 60`, `Y = 30`, `Width = 25`, and `Height = 35` places a rectangular trigger area toward the right side of the desktop.
 
 > **Tip:** Use two images with the same dimensions and composition for the cleanest visual switch. If the two images use different fit options, the picture can shift when the cursor enters the zone.
 
@@ -91,7 +92,9 @@ HoverWallpaper/
 │   │   ├── HoverWallpaper.ico      # Windows executable / installer icon
 │   │   └── HoverWallpaper.png      # Repository / README icon
 │   ├── HoverWallpaper.csproj       # .NET Windows Forms project
-│   ├── Program.cs                  # Entry point, settings, settings UI, wallpaper window
+│   ├── Program.cs                  # Entry point, settings model, wallpaper window
+│   ├── SettingsWindow.xaml(.cs)    # Fluent settings: Image 1 plus a list of hover zones
+│   ├── ZoneCard.xaml(.cs)          # Per-zone card: image, fit/crop, area and preview
 │   ├── TrayApp.cs                  # Tray icon, wallpaper lifetime, single-instance handling
 │   ├── ImageFit.cs                 # Fit modes (fill, fit, stretch, tile, center, crop)
 │   ├── CropEditorForm.cs           # Drag-to-crop editor for the custom crop option
@@ -225,10 +228,11 @@ The workflow currently uploads the installer as a GitHub Actions artifact. It do
    - **Create a desktop shortcut**
    - **Start Hover Wallpaper when I sign in to Windows**
 4. Finish installation and launch Hover Wallpaper.
-5. Browse for Image 1 and Image 2.
-6. Choose a fit for each image. For **Custom crop**, click **Crop…** and drag the area you want.
-7. Adjust the hover area, either with the number fields or with **Visual Editor…**.
-8. Click **Apply wallpaper**.
+5. Browse for Image 1.
+6. Choose the first hover zone's image, then click **Add hover zone** for each additional zone. Each zone gets its own image.
+7. Choose a fit for each image. For **Custom crop**, click **Adjust crop…** and drag the area you want.
+8. Adjust each hover area, either with the number fields or with **Open visual editor**.
+9. Click **Apply**.
 
 ### Closing the window and exiting
 
@@ -256,13 +260,13 @@ The settings window also includes a **Launch when I sign in to Windows** checkbo
 
 ## 🗂️ Settings and data
 
-The application stores its image paths, fit options, crop areas, hover-zone and fade settings at:
+The application stores Image 1, each hover zone's image, fit, crop, position and size, and the fade settings at:
 
 ```text
 %LOCALAPPDATA%\HoverWallpaper\settings.json
 ```
 
-The settings file is created when you click **Apply wallpaper**.
+The settings file is created when you click **Apply**. Older single-zone files load without changes: their Image 2 and hover area become the first zone and are upgraded on the next save.
 
 ## 🧱 Technology
 
@@ -278,7 +282,7 @@ The settings file is created when you click **Apply wallpaper**.
 
 Hover Wallpaper is an early prototype. Please keep these limitations in mind:
 
-- **One hover zone:** only one rectangular trigger area is supported.
+- **Up to 12 hover zones:** each has its own image, but only one can be active at a time. Overlaps use the first zone in the list.
 - **One canvas for all monitors:** fit options and crops are applied to the whole virtual desktop, not to each monitor on its own.
 - **Needs a wallpaper layer:** the app draws above the Windows background. If Windows keeps resetting Personalization to a solid color, the desktop behind the app can stay black when the app is not running.
 - **Windows desktop integration:** the app attaches its wallpaper window to Explorer's `WorkerW` desktop host. Explorer updates, Windows configurations, and multi-monitor setups can behave differently. The app attempts to reattach if the host disappears, but this needs broader testing.
@@ -308,7 +312,7 @@ This project has not yet been validated across a range of Windows 11 devices. Te
 Ideas for future versions:
 
 - [x] Visual hover-zone editor with drag-to-select.
-- [ ] Multiple hover zones with independent alternate images.
+- [x] Multiple hover zones with independent alternate images.
 - [x] Smooth fade transitions with separate fade-in and fade-out durations.
 - [ ] Per-monitor image and hover-zone configuration.
 - [ ] Better handling of Explorer restarts and desktop changes.

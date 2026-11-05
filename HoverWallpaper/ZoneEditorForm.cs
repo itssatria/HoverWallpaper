@@ -102,7 +102,7 @@ public sealed class ZoneEditorForm : Form
 
         rdoViewImage2 = new RadioButton
         {
-            Text = "Image 2 (Hover)",
+            Text = "Zone image (hover)",
             Checked = false,
             AutoSize = true,
             Location = new Point(410, 15),

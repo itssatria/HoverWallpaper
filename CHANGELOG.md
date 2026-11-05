@@ -5,7 +5,12 @@ All notable changes to Hover Wallpaper are listed here. The newest release is fi
 ## Unreleased
 
 ### Added
+- **Multiple hover zones.** Settings now starts with one hover zone and has an **Add hover zone** button; each zone gets its own image, fit, crop and screen area, and can be removed again (up to 12 zones). Entering a zone reveals that zone's image; leaving all zones restores Image 1. When zones overlap, the first zone in the list wins. Each zone preview shows Image 1 with that zone's rectangle.
 - **Fade animation toggle and duration sliders.** Preferences now has a **Fade animation between images** switch and separate **Fade in** / **Fade out** sliders (0–2000 ms, 0 = instant), saved to `settings.json`. The wallpaper cross-fades with a smooth ease instead of switching instantly, and a fade reversed mid-way starts from the current blend instead of jumping.
+
+### Changed
+- **Settings layout.** Image 2's fixed card became a per-zone card list, so the settings window scrolls through zones instead of packing two images into fixed side-by-side cards.
+- **Settings migration.** Existing `settings.json` files are read as a single hover zone (`Image2`/`X`/`Y`/`Width`/`Height`/`Fit2`/`Crop2`) and are upgraded to the new `Zones` list on the next save. The legacy fields are no longer written.
 
 ## v1.0 - 2026-11-05
 

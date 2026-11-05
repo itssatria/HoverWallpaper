@@ -78,25 +78,30 @@ public static class ImageHelper
 // ──────────────────────────────────────────────────────────
 // Settings model
 // ──────────────────────────────────────────────────────────
-public sealed class AppSettings
+public sealed class HoverZone
 {
-    public string Image1 { get; set; } = "";
-    public string Image2 { get; set; } = "";
+    public string Image { get; set; } = "";
     public int X { get; set; } = 60;
     public int Y { get; set; } = 30;
     public int Width { get; set; } = 25;
     public int Height { get; set; } = 35;
+    public FitMode Fit { get; set; } = FitMode.Fill;
+    public CropRect Crop { get; set; } = new();
+}
+
+public sealed class AppSettings
+{
+    public List<HoverZone> Zones { get; set; } = [new()];
+    public string Image1 { get; set; } = "";
     public bool StartWithWindows { get; set; }
     public bool FadeEnabled { get; set; } = true;
     public int FadeInMs { get; set; } = 250;
     public int FadeOutMs { get; set; } = 250;
     public FitMode Fit1 { get; set; } = FitMode.Fill;
-    public FitMode Fit2 { get; set; } = FitMode.Fill;
     public CropRect Crop1 { get; set; } = new();
-    public CropRect Crop2 { get; set; } = new();
 
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool HasImages => File.Exists(Image1) && File.Exists(Image2);
+    public bool HasImages => File.Exists(Image1) && Zones is { Count: > 0 } && Zones.All(z => File.Exists(z.Image));
 
     static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -106,8 +111,66 @@ public sealed class AppSettings
 
     public static AppSettings Load()
     {
-        try { return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new(); }
+        try
+        {
+            string json = File.ReadAllText(FilePath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var settings = JsonSerializer.Deserialize<AppSettings>(json) ?? new();
+
+            // Versions before multiple zones stored the only hover zone as flat
+            // Image2/X/Y/Width/Height/Fit2/Crop2 properties.
+            if (!root.TryGetProperty(nameof(Zones), out _))
+            {
+                settings.Zones = [new HoverZone
+                {
+                    Image = Text(root, "Image2"),
+                    X = Num(root, "X", 60),
+                    Y = Num(root, "Y", 30),
+                    Width = Num(root, "Width", 25),
+                    Height = Num(root, "Height", 35),
+                    Fit = Enum.TryParse<FitMode>(Text(root, "Fit2"), ignoreCase: true, out var fit) ? fit : FitMode.Fill,
+                    Crop = Crop(root, "Crop2")
+                }];
+            }
+
+            settings.Zones ??= [];
+            settings.Zones = settings.Zones.Where(z => z != null).ToList();
+            if (settings.Zones.Count == 0) settings.Zones.Add(new HoverZone());
+            foreach (var zone in settings.Zones)
+            {
+                zone.Image ??= "";
+                zone.Crop ??= new();
+            }
+            settings.Image1 ??= "";
+            settings.Crop1 ??= new();
+            return settings;
+        }
         catch { return new(); }
+    }
+
+    static string Text(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? ""
+            : "";
+
+    static int Num(JsonElement root, string name, int fallback) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int n)
+            ? n
+            : fallback;
+
+    static CropRect Crop(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) return new();
+        static double Num(JsonElement o, string n, double fallback) =>
+            o.TryGetProperty(n, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out double d) ? d : fallback;
+        return new CropRect
+        {
+            X = Num(value, "X", 0),
+            Y = Num(value, "Y", 0),
+            W = Num(value, "W", 100),
+            H = Num(value, "H", 100)
+        };
     }
     public void Save()
     {
@@ -143,30 +206,35 @@ public sealed class WallpaperWindow : Form
     readonly AppSettings settings;
     readonly PictureBox picture = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Normal };
     readonly System.Windows.Forms.Timer timer = new() { Interval = 30 };
-    Image? normal, hover;
-    bool showingHover;
+    Image? normal;
+    readonly Bitmap?[] hoverImages;   // rendered lazily, one full-screen bitmap per zone
+    readonly bool[] hoverFailed;      // a zone whose image could not be loaded
+    readonly int[] cachedUse;         // last-use tick per cached zone, for eviction
+    int cacheTick;
+    int displayedZone = -1;
     IntPtr worker;
 
-    // Cross-fade state. fade is 0 when Image 1 is fully visible and 1 when Image 2 is.
-    Bitmap? blend;            // reused compositing surface, only allocated while fading
-    float fade, fadeFrom, fadeGoal;
+    // A transition retains the exact frame shown when it starts, so switching
+    // zones mid-fade continues smoothly from whatever is on screen.
+    Bitmap? blend;            // reusable compositing surface
+    Bitmap? capturedSource;   // copy of the blend when a fade is interrupted
+    Image? fadeFromImage;
+    float fade = 1f;          // 0 = fadeFromImage, 1 = the target image
     int fadeDurationMs;
     readonly System.Diagnostics.Stopwatch fadeClock = new();
 
     public WallpaperWindow(AppSettings s)
     {
         settings = s;
+        hoverImages = new Bitmap?[s.Zones.Count];
+        hoverFailed = new bool[s.Zones.Count];
+        cachedUse = new int[s.Zones.Count];
 
         var size = SystemInformation.VirtualScreen.Size;
         using (var src1 = ImageHelper.LoadSafeImage(s.Image1, out var e1))
         {
             if (src1 == null) throw new InvalidOperationException($"Cannot load Image 1:\n{e1}");
             normal = ImageRenderer.Render(src1, size, s.Fit1, s.Crop1);
-        }
-        using (var src2 = ImageHelper.LoadSafeImage(s.Image2, out var e2))
-        {
-            if (src2 == null) throw new InvalidOperationException($"Cannot load Image 2:\n{e2}");
-            hover = ImageRenderer.Render(src2, size, s.Fit2, s.Crop2);
         }
 
         picture.Image = normal;
@@ -286,7 +354,7 @@ public sealed class WallpaperWindow : Form
         var vs = SystemInformation.VirtualScreen;
         SetWindowPos(Handle, insertAfter, 0, 0, vs.Width, vs.Height, posFlags);
         picture.Bounds = new Rectangle(0, 0, vs.Width, vs.Height);
-        ApplyFadeFrame();
+        ApplyFrame();
         PerformLayout();
         SetLayeredWindowAttributes(Handle, 0, 255, 0x2); // LWA_ALPHA
         Invalidate(true);
@@ -300,92 +368,180 @@ public sealed class WallpaperWindow : Form
             try { AttachToDesktop(); } catch { return; }
         }
         if (!GetCursorPos(out var p)) return;
+
+        // First zone in the list wins when zones overlap, so list order is the priority.
+        int zoneHit = -1;
         var s = SystemInformation.VirtualScreen;
-        int rx = s.Left + s.Width  * settings.X      / 100;
-        int ry = s.Top  + s.Height * settings.Y      / 100;
-        int rw =          s.Width  * settings.Width  / 100;
-        int rh =          s.Height * settings.Height / 100;
-        bool inside = p.X >= rx && p.X < rx + rw && p.Y >= ry && p.Y < ry + rh;
-        if (inside != showingHover)
+        for (int i = 0; i < settings.Zones.Count; i++)
         {
-            showingHover = inside;
-            BeginFade(inside ? 1f : 0f);
+            var z = settings.Zones[i];
+            int rx = s.Left + s.Width  * z.X      / 100;
+            int ry = s.Top  + s.Height * z.Y      / 100;
+            int rw =          s.Width  * z.Width  / 100;
+            int rh =          s.Height * z.Height / 100;
+            if (p.X >= rx && p.X < rx + rw && p.Y >= ry && p.Y < ry + rh) { zoneHit = i; break; }
         }
+
+        if (zoneHit != displayedZone) SwitchTo(zoneHit);
         AdvanceFade();
     }
 
-    // Starts a transition toward targetFade. A fade started while another is running
-    // picks up from the current image so a quick in-and-out does not jump.
-    void BeginFade(float targetFade)
+    // Starts a transition to the normal image (-1) or a hover zone's image.
+    // A switch made mid-fade keeps the blended frame as its starting point.
+    void SwitchTo(int zone)
     {
-        int duration = showingHover ? settings.FadeInMs : settings.FadeOutMs;
-        if (!settings.FadeEnabled || duration <= 0 || fade == targetFade)
-        {
-            fade = fadeGoal = fadeFrom = targetFade;
-            fadeDurationMs = 0;
-            ApplyFadeFrame();
-            return;
-        }
-        fadeFrom = fade;
-        fadeGoal = targetFade;
-        fadeDurationMs = Math.Max(1, duration);
+        int duration = !settings.FadeEnabled ? 0 : (zone >= 0 ? settings.FadeInMs : settings.FadeOutMs);
+
+        // Only a real fade needs the current frame copied; an instant switch does not.
+        Image? from = duration > 0 ? SnapshotCurrentFrame() : null;
+        displayedZone = zone;
+        fadeFromImage = from;
         fadeClock.Restart();
+        fadeDurationMs = Math.Max(0, duration);
+        fade = from == null ? 1f : 0f;
+        ApplyFrame();
+    }
+
+    Image? CurrentTarget => displayedZone >= 0 ? ZoneImage(displayedZone) : normal;
+
+    // Renders a zone's image the first time it is needed and keeps it for later hovers.
+    // At most a few are cached; each one is a full virtual-desktop bitmap.
+    Image? ZoneImage(int zone)
+    {
+        if (zone < 0 || zone >= hoverImages.Length) return normal;
+        if (hoverImages[zone] is { } cached)
+        {
+            cachedUse[zone] = ++cacheTick;
+            return cached;
+        }
+        if (hoverFailed[zone]) return normal;
+        if (string.IsNullOrWhiteSpace(settings.Zones[zone].Image)) return normal;
+
+        var z = settings.Zones[zone];
+        using var src = ImageHelper.LoadSafeImage(z.Image, out var error);
+        if (src == null)
+        {
+            // A broken zone image falls back to the normal wallpaper instead of blanking the desktop.
+            hoverFailed[zone] = true;
+            System.Diagnostics.Debug.WriteLine($"Hover zone {zone + 1} image error: {error}");
+            return normal;
+        }
+
+        var rendered = ImageRenderer.Render(src, SystemInformation.VirtualScreen.Size, z.Fit, z.Crop);
+        hoverImages[zone] = rendered;
+        cachedUse[zone] = ++cacheTick;
+        EvictZoneImages(zone);
+        return rendered;
+    }
+
+    // Keeps the most recently used zone bitmaps so many zones stay cheap in memory.
+    void EvictZoneImages(int keep)
+    {
+        const int limit = 4;
+        int cachedCount = 0;
+        foreach (var image in hoverImages) if (image != null) cachedCount++;
+        while (cachedCount > limit)
+        {
+            int oldest = -1;
+            for (int i = 0; i < hoverImages.Length; i++)
+            {
+                var image = hoverImages[i];
+                // Never evict an image that is being shown or is about to be drawn.
+                if (i == keep || image == null || ReferenceEquals(image, picture.Image) ||
+                    ReferenceEquals(image, fadeFromImage)) continue;
+                if (oldest < 0 || cachedUse[i] < cachedUse[oldest]) oldest = i;
+            }
+            if (oldest < 0) break;
+            hoverImages[oldest]?.Dispose();
+            hoverImages[oldest] = null;
+            cachedCount--;
+        }
+    }
+
+    // Copies the frame currently on screen into the reused capture buffer. The copy
+    // keeps the start of a fade stable even if that image is later evicted or disposed.
+    Image? SnapshotCurrentFrame()
+    {
+        var current = picture.Image;
+        if (current == null) return null;
+        EnsureBuffers();
+        using var g = Graphics.FromImage(capturedSource!);
+        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+        g.DrawImage(current, new Rectangle(0, 0, capturedSource!.Width, capturedSource.Height),
+                            0, 0, current.Width, current.Height, GraphicsUnit.Pixel);
+        return capturedSource;
     }
 
     // The tick advances the fade by its real elapsed time, so the configured duration
     // holds even if a tick is late.
     void AdvanceFade()
     {
-        if (fade == fadeGoal) return;
-        float t = Math.Min(1f, (float)(fadeClock.ElapsedMilliseconds / (double)fadeDurationMs));
+        if (fade >= 1f) return;
+        float t = Math.Min(1f, (float)(fadeClock.ElapsedMilliseconds / (double)Math.Max(1, fadeDurationMs)));
         // Smoothstep: gentle start and end, no visible snap.
-        float eased = t * t * (3f - 2f * t);
-        fade = fadeFrom + (fadeGoal - fadeFrom) * eased;
+        fade = t * t * (3f - 2f * t);
         if (t >= 1f)
         {
-            fade = fadeGoal;
-            fadeDurationMs = 0;
+            fade = 1f;
+            fadeFromImage = null;
         }
-        ApplyFadeFrame();
+        ApplyFrame();
     }
 
-    void ApplyFadeFrame()
+    void ApplyFrame()
     {
-        if (fade <= 0f) picture.Image = normal;
-        else if (fade >= 1f) picture.Image = hover;
-        else
+        var target = CurrentTarget;
+        if (target == null) { picture.Image = normal; return; }
+
+        if (fade >= 1f || fadeFromImage == null)
         {
-            DrawBlend(fade);
-            // The blend bitmap is reused every frame, so assign Image only when it
-            // changes and force the repaint ourselves.
-            if (!ReferenceEquals(picture.Image, blend)) picture.Image = blend;
+            if (picture.Image != target) picture.Image = target;
             picture.Invalidate();
+            return;
         }
+
+        DrawBlend(fadeFromImage, target, fade);
+        // The blend bitmap is reused every frame, so assign Image only when it
+        // changes and force the repaint ourselves.
+        if (!ReferenceEquals(picture.Image, blend)) picture.Image = blend;
+        picture.Invalidate();
     }
 
-    void DrawBlend(float opacity)
+    void EnsureBuffers()
     {
-        if (normal == null || hover == null) return;
-        // Allocated on first use and kept for quick fades back and forth.
-        if (blend == null || blend.Width != normal.Width || blend.Height != normal.Height)
+        int w = normal?.Width ?? 1;
+        int h = normal?.Height ?? 1;
+        if (blend == null || blend.Width != w || blend.Height != h)
         {
             blend?.Dispose();
-            blend = new Bitmap(normal.Width, normal.Height, PixelFormat.Format32bppPArgb);
+            blend = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+            capturedSource?.Dispose();
+            capturedSource = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
         }
-        using var g = Graphics.FromImage(blend);
+    }
+
+    void DrawBlend(Image from, Image to, float opacity)
+    {
+        EnsureBuffers();
+        using var g = Graphics.FromImage(blend!);
         g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-        g.DrawImage(normal, 0, 0, blend.Width, blend.Height);
+        g.DrawImage(from, new Rectangle(0, 0, blend!.Width, blend.Height));
         g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceOver;
         var colorMatrix = new System.Drawing.Imaging.ColorMatrix { Matrix33 = opacity };
         using var attributes = new System.Drawing.Imaging.ImageAttributes();
         attributes.SetColorMatrix(colorMatrix);
         var dest = new Rectangle(0, 0, blend.Width, blend.Height);
-        g.DrawImage(hover, dest, 0, 0, hover.Width, hover.Height, GraphicsUnit.Pixel, attributes);
+        g.DrawImage(to, dest, 0, 0, to.Width, to.Height, GraphicsUnit.Pixel, attributes);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        timer.Stop(); normal?.Dispose(); hover?.Dispose(); blend?.Dispose();
+        timer.Stop();
+        normal?.Dispose();
+        foreach (var image in hoverImages) image?.Dispose();
+        Array.Clear(hoverImages);
+        blend?.Dispose();
+        capturedSource?.Dispose();
         base.OnFormClosed(e);
     }
 
