@@ -192,12 +192,22 @@ The script will:
 2. Publish the app in Release mode for `win-x64` (`--self-contained true -p:PublishSingleFile=true`).
 3. Locate Inno Setup 6 (`ISCC.exe`) and compile the installer.
 
+### Versioning
+
+`build.ps1` works out the version number from `CHANGELOG.md`, so you never edit it by hand:
+
+- It starts from the newest released heading (for example `## v1.2.0 - 2026-11-05`).
+- Every top-level bullet under `## Unreleased` counts: each bullet under `### Added` is a new feature (**minor +1**); each bullet under any other heading (`### Fixed`, `### Changed`, ...) is a fix or change (**patch +1**).
+- With new features the result is `MAJOR.(MINOR + features).fixes`; with only fixes it is `MAJOR.MINOR.(PATCH + fixes)`.
+
+Rebuilding without changing the changelog gives the same version. To mark a version as released, run `.\build.ps1 -Release`, which stamps the Unreleased entries as `## vX.Y.Z - date`. For a major bump, or to force a number, run `.\build.ps1 -Version 2.0.0`.
+
 ### 4. Find the installer
 
 When the build completes successfully, the installer will be created here:
 
 ```text
-installer/Output/HoverWallpaper-Setup-1.0.0.exe
+installer/Output/HoverWallpaper-Setup-<version>.exe
 ```
 
 > **Troubleshooting:**
@@ -213,7 +223,7 @@ The workflow runs on a Windows GitHub-hosted runner and:
 - Installs .NET 8.
 - Installs Inno Setup.
 - Runs `build.ps1`.
-- Uploads `HoverWallpaper-Setup-1.0.0.exe` as a workflow artifact.
+- Uploads `HoverWallpaper-Setup-<version>.exe` as a workflow artifact.
 
 ### Run it manually
 
@@ -236,7 +246,7 @@ The workflow currently uploads the installer as a GitHub Actions artifact. It do
 
 ## 🪟 Installation and usage
 
-1. Run `HoverWallpaper-Setup-1.0.0.exe`.
+1. Run `HoverWallpaper-Setup-<version>.exe`.
 2. Follow the installer.
 3. Optionally select:
    - **Create a desktop shortcut**

@@ -4,14 +4,20 @@ All notable changes to Hover Wallpaper are listed here. The newest release is fi
 
 ## Unreleased
 
+## v1.3.4 - 2026-11-06
+
 ### Added
 - **Multiple hover zones.** Settings now starts with one hover zone and has an **Add hover zone** button; each zone gets its own image, fit, crop and screen area, and can be removed again (up to 12 zones). Entering a zone reveals that zone's image; leaving all zones restores Image 1. When zones overlap, the first zone in the list wins. Each zone preview shows Image 1 with that zone's rectangle.
 - **Fade animation toggle and duration sliders.** Preferences now has a **Fade animation between images** switch and separate **Fade in** / **Fade out** sliders (0–2000 ms, 0 = instant), saved to `settings.json`. The wallpaper cross-fades with a smooth ease instead of switching instantly, and a fade reversed mid-way starts from the current blend instead of jumping.
 - **Saved presets.** A new **Presets** section saves the whole scene — Image 1 path, fit and crop, every hover zone's image, fit, crop and X/Y/width/height, plus the fade toggle and durations — under a name. Presets can be loaded back into the editor or deleted, and are stored in `%LOCALAPPDATA%\HoverWallpaper\presets.json`. Startup-at-sign-in is deliberately excluded because it is an app preference, not a scene. Loading a preset does not touch the desktop until **Apply**; saving over an existing name asks first, and saving with missing image paths confirms before continuing.
 
 ### Changed
+- **Automatic versioning.** `build.ps1` now works out the version from this changelog (features raise the minor number, fixes and changes raise the patch number) and puts it in the exe, the installer and the installer file name. `-Release` stamps the Unreleased entries as a release.
 - **Settings layout.** Image 2's fixed card became a per-zone card list, so the settings window scrolls through zones instead of packing two images into fixed side-by-side cards.
 - **Settings migration.** Existing `settings.json` files are read as a single hover zone (`Image2`/`X`/`Y`/`Width`/`Height`/`Fit2`/`Crop2`) and are upgraded to the new `Zones` list on the next save. The legacy fields are no longer written.
+
+### Fixed
+- **The wallpaper was not applied when the app started at sign-in.** Right after sign-in the wallpaper window attached to Explorer's desktop before the desktop was ready and ended up on the wrong layer. It now waits until the desktop is ready, attaches then, and re-attaches if Explorer restarts.
 
 ## v1.0 - 2026-11-05
 

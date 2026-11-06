@@ -34,18 +34,18 @@ public sealed class TrayApp : ApplicationContext
             (_, _) => ui.Post(_ => ShowSettings(), null), null, Timeout.Infinite, false);
 
         var settings = AppSettings.Load();
-        bool started = startWallpaper && settings.HasImages && TryStart(settings, out _);
+        bool started = startWallpaper && settings.HasImages && TryStart(settings, out _, waitForDesktop: startHidden);
         if (!startHidden || !started) ShowSettings();
     }
     public bool IsRunning => wallpaper is { IsDisposed: false };
 
-    public bool TryStart(AppSettings settings, out string? error)
+    public bool TryStart(AppSettings settings, out string? error, bool waitForDesktop = false)
     {
         error = null;
         Stop();
         try
         {
-            var w = new WallpaperWindow(settings);
+            var w = new WallpaperWindow(settings, waitForDesktop);
             w.Show();
             wallpaper = w;
             return true;

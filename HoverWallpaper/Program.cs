@@ -229,6 +229,14 @@ public sealed class WallpaperWindow : Form
     int displayedZone = -1;
     IntPtr worker;
 
+    // Right after sign-in Explorer may not have built the desktop yet, so attaching
+    // immediately can latch onto the wrong window. We wait until the desktop is ready
+    // (checked about once a second) and attach then.
+    bool attached;
+    readonly bool waitForDesktop;
+    long lastReadyCheck;
+    int readyStreak;
+
     // A transition retains the exact frame shown when it starts, so switching
     // zones mid-fade continues smoothly from whatever is on screen.
     Bitmap? blend;            // reusable compositing surface
@@ -238,9 +246,12 @@ public sealed class WallpaperWindow : Form
     int fadeDurationMs;
     readonly System.Diagnostics.Stopwatch fadeClock = new();
 
-    public WallpaperWindow(AppSettings s)
+    // waitForDesktop: true when launched at sign-in, so the first attach also waits for
+    // Explorer's desktop to settle instead of attaching immediately.
+    public WallpaperWindow(AppSettings s, bool waitForDesktop = false)
     {
         settings = s;
+        this.waitForDesktop = waitForDesktop;
         hoverImages = new Bitmap?[s.Zones.Count];
         hoverFailed = new bool[s.Zones.Count];
         cachedUse = new int[s.Zones.Count];
@@ -276,7 +287,13 @@ public sealed class WallpaperWindow : Form
         Load -= OnLoad;
         try
         {
-            AttachToDesktop();
+            // If the desktop is not ready yet (typical at sign-in), UpdateHover keeps
+            // retrying quietly until it is.
+            if (!waitForDesktop && DesktopReady())
+            {
+                AttachToDesktop();
+                attached = true;
+            }
             timer.Start();
         }
         catch (Exception ex)
@@ -285,6 +302,28 @@ public sealed class WallpaperWindow : Form
             MessageBox.Show(ex.Message, "Wallpaper attach error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
+    }
+
+    // True once Explorer has created the desktop: Progman exists and the icon view
+    // (SHELLDLL_DefView) exists, either under Progman (Windows 11 24H2+) or under a
+    // top-level WorkerW (older builds).
+    static bool DesktopReady()
+    {
+        var progman = FindWindow("Progman", null);
+        if (progman == IntPtr.Zero) return false;
+        if (FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero) return true;
+
+        bool found = false;
+        EnumWindows((hwnd, _) =>
+        {
+            if (FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
+            {
+                found = true;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
 
     void AttachToDesktop()
@@ -378,9 +417,25 @@ public sealed class WallpaperWindow : Form
 
     void UpdateHover()
     {
-        if (worker == IntPtr.Zero || !IsWindow(worker))
+        if (attached && (worker == IntPtr.Zero || !IsWindow(worker)))
         {
-            try { AttachToDesktop(); } catch { return; }
+            // Explorer restarted or the desktop host went away: wait for it and re-attach.
+            attached = false;
+            readyStreak = 0;
+        }
+        if (!attached)
+        {
+            long now = Environment.TickCount64;
+            if (now - lastReadyCheck < 1000) return;
+            lastReadyCheck = now;
+
+            // Require the desktop to look ready on two checks in a row so we do not
+            // attach in the middle of Explorer's start-up.
+            readyStreak = DesktopReady() ? readyStreak + 1 : 0;
+            if (readyStreak < 2) return;
+
+            try { AttachToDesktop(); attached = true; }
+            catch { readyStreak = 0; return; }
         }
         if (!GetCursorPos(out var p)) return;
 

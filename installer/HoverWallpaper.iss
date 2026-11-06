@@ -1,5 +1,8 @@
 #define MyAppName "Hover Wallpaper"
-#define MyAppVersion "1.0.0"
+; build.ps1 passes the real version with /DMyAppVersion=x.y.z; this is only a fallback.
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "Hover Wallpaper"
 #define MyAppExeName "HoverWallpaper.exe"
 
@@ -12,7 +15,7 @@ DefaultDirName={autopf}\Hover Wallpaper
 DefaultGroupName=Hover Wallpaper
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=HoverWallpaper-Setup-1.0.0
+OutputBaseFilename=HoverWallpaper-Setup-{#MyAppVersion}
 SetupIconFile=..\HoverWallpaper\Assets\HoverWallpaper.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64

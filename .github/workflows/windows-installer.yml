@@ -21,5 +21,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HoverWallpaper-Windows11-Installer
-          path: installer/Output/HoverWallpaper-Setup-1.0.0.exe
+          path: installer/Output/HoverWallpaper-Setup-*.exe
           if-no-files-found: error
