@@ -214,6 +214,59 @@ internal static class StartupRegistration
 }
 
 // ──────────────────────────────────────────────────────────
+// Windows background wallpaper enforcement
+// ──────────────────────────────────────────────────────────
+internal static class WindowsWallpaperGuard
+{
+    const int SPI_SETDESKWALLPAPER = 0x0014;
+    const int SPIF_UPDATEINIFILE = 0x01;
+    const int SPIF_SENDWININICHANGE = 0x02;
+
+    // HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers\BackgroundType:
+    // 0 = Picture, 1 = Solid color, 2 = Slideshow (Windows 10/11). Treat non-picture as
+    // modes to override while HoverWallpaper is running.
+    public static void EnforceSingleImage()
+    {
+        try
+        {
+            int backgroundType = Registry.GetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers",
+                "BackgroundType", 0) is int t ? t : 0;
+            if (backgroundType == 0) return;
+
+            string? wallpaper = Registry.GetValue(@"HKEY_CURRENT_USER\Control Panel\Desktop", "WallPaper", null) as string;
+            if (string.IsNullOrWhiteSpace(wallpaper) || !File.Exists(wallpaper))
+            {
+                wallpaper = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    @"Microsoft\Windows\Themes\TranscodedWallpaper");
+            }
+            if (string.IsNullOrWhiteSpace(wallpaper) || !File.Exists(wallpaper)) return;
+
+            Registry.SetValue(
+                @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers",
+                "BackgroundType", 0, RegistryValueKind.DWord);
+
+            // Clear slideshow folder hints so Windows stays in single-image mode.
+            using (var slide = Registry.CurrentUser.OpenSubKey(@"Control Panel\Personalization\Desktop Slideshow", writable: true))
+            {
+                slide?.DeleteValue("ImagesRootPIDL", throwOnMissingValue: false);
+                slide?.DeleteValue("ImagesRootPath", throwOnMissingValue: false);
+            }
+
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaper, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"HoverWallpaper wallpaper guard error: {ex}");
+        }
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool SystemParametersInfo(int uiAction, int uiParam, string? pvParam, int fWinIni);
+}
+
+// ──────────────────────────────────────────────────────────
 // Desktop wallpaper window (renders behind desktop icons)
 // ──────────────────────────────────────────────────────────
 public sealed class WallpaperWindow : Form
@@ -236,6 +289,12 @@ public sealed class WallpaperWindow : Form
     readonly bool waitForDesktop;
     long lastReadyCheck;
     int readyStreak;
+
+    // Windows can rebuild or reorder the desktop wallpaper layer when the system
+    // background changes (for example, a Windows slideshow advancing). Reattach on the
+    // next tick so the hover wallpaper stays behind the icons instead of failing later.
+    bool reattachRequested;
+    long lastWallpaperGuardCheck;
 
     // A transition retains the exact frame shown when it starts, so switching
     // zones mid-fade continues smoothly from whatever is on screen.
@@ -274,7 +333,15 @@ public sealed class WallpaperWindow : Form
         Size = new Size(1, 1);
 
         Load += OnLoad;
-        timer.Tick += (_, _) => UpdateHover();
+        timer.Tick += (_, _) =>
+        {
+            try { UpdateHover(); }
+            catch (Exception ex)
+            {
+                // Keep the wallpaper running if a transient desktop or rendering issue occurs.
+                System.Diagnostics.Debug.WriteLine($"HoverWallpaper tick error: {ex}");
+            }
+        };
     }
 
     protected override CreateParams CreateParams
@@ -417,9 +484,17 @@ public sealed class WallpaperWindow : Form
 
     void UpdateHover()
     {
-        if (attached && (worker == IntPtr.Zero || !IsWindow(worker)))
+        if (reattachRequested)
         {
-            // Explorer restarted or the desktop host went away: wait for it and re-attach.
+            attached = false;
+            readyStreak = 0;
+            lastReadyCheck = 0;
+            reattachRequested = false;
+        }
+        if (attached && (worker == IntPtr.Zero || !IsWindow(worker) || GetParent(Handle) != worker))
+        {
+            // Explorer restarted, the desktop host went away, or Windows moved the
+            // wallpaper window (for example during a background/slideshow change).
             attached = false;
             readyStreak = 0;
         }
@@ -434,9 +509,23 @@ public sealed class WallpaperWindow : Form
             readyStreak = DesktopReady() ? readyStreak + 1 : 0;
             if (readyStreak < 2) return;
 
-            try { AttachToDesktop(); attached = true; }
+            try
+            {
+                AttachToDesktop();
+                attached = true;
+                WindowsWallpaperGuard.EnforceSingleImage();
+                lastWallpaperGuardCheck = Environment.TickCount64;
+            }
             catch { readyStreak = 0; return; }
         }
+
+        long guardNow = Environment.TickCount64;
+        if (guardNow - lastWallpaperGuardCheck >= 3000)
+        {
+            WindowsWallpaperGuard.EnforceSingleImage();
+            lastWallpaperGuardCheck = guardNow;
+        }
+
         if (!GetCursorPos(out var p)) return;
 
         // First zone in the list wins when zones overlap, so list order is the priority.
@@ -608,6 +697,41 @@ public sealed class WallpaperWindow : Form
         g.DrawImage(to, dest, 0, 0, to.Width, to.Height, GraphicsUnit.Pixel, attributes);
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        const int WM_SETTINGCHANGE = 0x001A;
+        const int WM_DISPLAYCHANGE = 0x007E;
+        const int WM_DWMCOMPOSITIONCHANGED = 0x031E;
+        const int SPI_SETDESKWALLPAPER = 0x0014;
+
+        if (m.Msg == WM_DISPLAYCHANGE || m.Msg == WM_DWMCOMPOSITIONCHANGED)
+        {
+            reattachRequested = true;
+        }
+        else if (m.Msg == WM_SETTINGCHANGE)
+        {
+            bool wallpaperChanged = m.WParam.ToInt64() == SPI_SETDESKWALLPAPER;
+            if (!wallpaperChanged && m.LParam != IntPtr.Zero)
+            {
+                try
+                {
+                    string? area = Marshal.PtrToStringUni(m.LParam);
+                    wallpaperChanged = string.Equals(area, "Wallpaper", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(area, "Policy", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(area, "intl", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { }
+            }
+            if (wallpaperChanged)
+            {
+                reattachRequested = true;
+                WindowsWallpaperGuard.EnforceSingleImage();
+            }
+        }
+
+        base.WndProc(ref m);
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         timer.Stop();
@@ -629,6 +753,7 @@ public sealed class WallpaperWindow : Form
     [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindow(string cls, string? name);
     [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? name);
     [DllImport("user32.dll")] static extern IntPtr SetParent(IntPtr child, IntPtr parent);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
